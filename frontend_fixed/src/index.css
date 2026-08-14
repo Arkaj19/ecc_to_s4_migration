@@ -1,0 +1,36 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-gray-50 text-gray-900 antialiased;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply px-6 py-3 bg-blue-600 text-white font-bold rounded-lg 
+           hover:bg-blue-700 transition-colors duration-200;
+  }
+  
+  .btn-secondary {
+    @apply px-6 py-3 bg-gray-200 text-gray-700 font-bold rounded-lg 
+           hover:bg-gray-300 transition-colors duration-200;
+  }
+  
+  .btn-success {
+    @apply px-6 py-3 bg-green-600 text-white font-bold rounded-lg 
+           hover:bg-green-700 transition-colors duration-200;
+  }
+  
+  .card {
+    @apply bg-white rounded-lg shadow-lg p-6;
+  }
+  
+  .input-file {
+    @apply w-full border-2 border-dashed border-gray-300 rounded-lg 
+           p-8 text-center hover:border-blue-500 transition-colors 
+           cursor-pointer;
+  }
+}
