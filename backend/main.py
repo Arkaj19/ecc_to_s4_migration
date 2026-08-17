@@ -147,7 +147,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 import json
 import io
-from processor import process_asset_registry
+from asset_processor import process_asset_registry
 from credit_processor import process_credit_registry
 import mappings
 import os
