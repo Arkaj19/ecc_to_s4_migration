@@ -148,6 +148,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import json
 import io
 from processor import process_asset_registry
+from credit_processor import process_credit_registry
 import mappings
 import os
  
@@ -157,6 +158,12 @@ TEMPLATE_PATH = os.path.join(
     BASE_DIR,
     "templates",
     "assets_load_template.xlsx"
+)
+
+CREDIT_TEMPLATE_PATH = os.path.join(
+    BASE_DIR,
+    "templates",
+    "Credit Data Load - SIT2.xlsx"
 )
  
  
@@ -290,6 +297,52 @@ async def process_asset(
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Error processing asset registry: {str(e)}")
+
+@app.post("/process-credit")
+async def process_credit(
+    file: UploadFile = File(...)
+):
+    """
+    POST endpoint that takes the Credit Registry Excel file
+    and returns the populated Credit Data Load template.
+    """
+
+    # Verify file type
+    if not file.filename.endswith((".xlsx", ".xls")):
+        raise HTTPException(
+            status_code=400,
+            detail="Only Excel files (.xlsx, .xls) are accepted."
+        )
+
+    try:
+        # Read uploaded registry file into memory
+        file_bytes = await file.read()
+        reg_io = io.BytesIO(file_bytes)
+
+        # Process Credit Registry
+        out_buf = process_credit_registry(
+            reg_io,
+            template_path=CREDIT_TEMPLATE_PATH
+        )
+
+        # Return populated Credit Data Load template
+        return StreamingResponse(
+            out_buf,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={
+                "Content-Disposition":
+                    "attachment; filename=credit_data_load_filled.xlsx"
+            }
+        )
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error processing credit registry: {str(e)}"
+        )
  
 if __name__ == "__main__":
     import uvicorn
