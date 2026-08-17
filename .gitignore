@@ -36,3 +36,4 @@ ECC_to_S4_Field_Mapping.xlsx
 # Generated output files
 output.xlsx
 generated_*.xlsx
+node_modules/

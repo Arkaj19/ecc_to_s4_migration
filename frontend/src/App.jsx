@@ -9,8 +9,17 @@ import ProcessButton from './components/ProcessButton';
 import DownloadButton from './components/DownloadButton';
 import StageTracker from './components/StageTracker';
 
-import { checkHealth, processAssetFile, processCreditFile, getDefaultMappings } from './api/client';
+import { checkHealth, processAssetFile, processCreditFile, processApFile, getDefaultMappings } from './api/client';
 import { previewExcelFile } from './utils/excelPreview';
+
+// Maps each active process type to its API call. Add an entry here (and
+// a matching export in api/client.js) whenever a new process type flips
+// from 'coming-soon' to 'active' in ProcessSelector's PROCESS_OPTIONS.
+const PROCESS_HANDLERS = {
+  ASSETS: processAssetFile,
+  CREDIT: processCreditFile,
+  AP: processApFile,
+};
 
 function App() {
   const [file, setFile] = useState(null);
@@ -105,9 +114,8 @@ function App() {
     setStatus({ type: 'info', message: `Processing ${file.name}...` });
 
     try {
-      const result = selectedProcess === 'CREDIT'
-        ? await processCreditFile(file)
-        : await processAssetFile(file);
+      const handler = PROCESS_HANDLERS[selectedProcess];
+      const result = await handler(file);
 
       setProcessedFile(result);
       setStatus({

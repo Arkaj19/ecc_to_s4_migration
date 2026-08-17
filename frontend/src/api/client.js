@@ -97,4 +97,11 @@ export const processCreditFile = (file) => {
   return postForFile('/process-credit', file, {}, 'credit_data_load_filled.xlsx');
 };
 
+// Process the AP registry — POST /process-ap
+// No mapping overrides supported on this route either — Payment Terms,
+// Company Code, and Tax Code are all mapped internally on the backend.
+export const processApFile = (file) => {
+  return postForFile('/process-ap', file, {}, 'AP_Data_Load_SIT2_filled.xlsx');
+};
+
 export default apiClient;
