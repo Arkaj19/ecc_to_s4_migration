@@ -1,10 +1,13 @@
 import React from 'react';
 
-const PROCESS_OPTIONS = {
+// Exported so App.jsx and ProcessButton.jsx can check which process types
+// are actually implemented without duplicating this list elsewhere — this
+// is the single source of truth for "active" vs "coming soon".
+export const PROCESS_OPTIONS = {
   ASSETS: { label: 'Assets', status: 'active', description: 'Asset Master & Values Migration' },
   AP: { label: 'Accounts Payable', status: 'coming-soon', description: 'Vendor & Invoice Migration' },
   AR: { label: 'Accounts Receivable', status: 'coming-soon', description: 'Customer & Invoice Migration' },
-  CREDIT: { label: 'Credit Management', status: 'coming-soon', description: 'Credit Limit & Risk Migration' },
+  CREDIT: { label: 'Credit Management', status: 'active', description: 'Credit Limit & Risk Migration' },
 };
 
 const ProcessSelector = ({ selectedProcess, onProcessChange, disabled }) => {

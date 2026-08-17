@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 
 import FileUpload from './components/FileUpload';
-import ProcessSelector from './components/ProcessSelector';
+import ProcessSelector, { PROCESS_OPTIONS } from './components/ProcessSelector';
 import DataPreview from './components/DataPreview';
 import MappingDisplay from './components/MappingDisplay';
 import StatusMessage from './components/StatusMessage';
@@ -9,7 +9,7 @@ import ProcessButton from './components/ProcessButton';
 import DownloadButton from './components/DownloadButton';
 import StageTracker from './components/StageTracker';
 
-import { checkHealth, processFile, getDefaultMappings } from './api/client';
+import { checkHealth, processAssetFile, processCreditFile, getDefaultMappings } from './api/client';
 import { previewExcelFile } from './utils/excelPreview';
 
 function App() {
@@ -95,7 +95,8 @@ function App() {
   };
 
   const handleProcess = async () => {
-    if (!file || selectedProcess !== 'ASSETS') return;
+    const isSupported = PROCESS_OPTIONS[selectedProcess]?.status === 'active';
+    if (!file || !isSupported) return;
 
     setProcessing(true);
     setProcessError(false);
@@ -104,13 +105,15 @@ function App() {
     setStatus({ type: 'info', message: `Processing ${file.name}...` });
 
     try {
-      const result = await processFile(file);
+      const result = selectedProcess === 'CREDIT'
+        ? await processCreditFile(file)
+        : await processAssetFile(file);
 
       setProcessedFile(result);
       setStatus({
         type: 'success',
         message: 'Processing complete',
-        details: `Generated S/4 load sheet with ${previewData?.totalRows || 0} rows`,
+        details: `Generated ${PROCESS_OPTIONS[selectedProcess].label.toLowerCase()} load sheet with ${previewData?.totalRows || 0} rows`,
       });
     } catch (error) {
       setProcessError(true);
@@ -219,7 +222,7 @@ function App() {
                 />
               )}
 
-              {file && isConnected && selectedProcess === 'ASSETS' && !processing && !processedFile && (
+              {file && isConnected && PROCESS_OPTIONS[selectedProcess]?.status === 'active' && !processing && !processedFile && (
                 <div className="flex items-center justify-center gap-1.5 text-xs text-gray-500">
                   <span className="w-1.5 h-1.5 rounded-full bg-green-500"></span>
                   Ready to process {file.name}
@@ -257,7 +260,7 @@ function App() {
                   <div className="bg-gray-50 rounded-lg p-3">
                     <p className="text-xs text-gray-500">Process</p>
                     <p className="text-sm font-medium text-gray-700">
-                      {selectedProcess === 'ASSETS' ? 'Assets' : selectedProcess}
+                      {PROCESS_OPTIONS[selectedProcess]?.label ?? selectedProcess}
                     </p>
                   </div>
                 </div>

@@ -34,30 +34,29 @@ export const getDefaultMappings = async () => {
   }
 };
 
-// Process the asset registry — POST /process-asset
-// `mappingOverrides`, if provided, is sent as the `mappings_json` field in
-// the same shape /default-mappings returns, and the backend merges it over
-// the built-in mapping tables for this run only.
-// Resolves to { blob, filename } — filename is read off the server's
-// Content-Disposition header rather than guessed on the frontend.
-export const processFile = async (file, mappingOverrides = null) => {
+/**
+ * Shared by every "upload a registry, get a populated template back" route
+ * (/process-asset, /process-credit, and whatever comes next for AP/AR).
+ * Resolves to { blob, filename } — filename is read off the server's
+ * Content-Disposition header rather than guessed on the frontend, since
+ * each route names its output differently.
+ */
+const postForFile = async (endpoint, file, extraFields = {}, fallbackFilename = 'output.xlsx') => {
   const formData = new FormData();
   formData.append('file', file);
-  if (mappingOverrides) {
-    formData.append('mappings_json', JSON.stringify(mappingOverrides));
-  }
+  Object.entries(extraFields).forEach(([key, value]) => {
+    if (value !== null && value !== undefined) formData.append(key, value);
+  });
 
   try {
-    const response = await apiClient.post('/process-asset', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
+    const response = await apiClient.post(endpoint, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
       responseType: 'blob',
     });
 
     const disposition = response.headers['content-disposition'] || '';
     const match = disposition.match(/filename="?([^"]+)"?/);
-    const filename = match ? match[1] : 'assets_load_template_filled.xlsx';
+    const filename = match ? match[1] : fallbackFilename;
 
     return { blob: response.data, filename };
   } catch (error) {
@@ -73,13 +72,29 @@ export const processFile = async (file, mappingOverrides = null) => {
         // response wasn't JSON — ignore and fall through to generic error
       }
       if (detail) {
-        console.error('Processing failed:', detail);
+        console.error(`${endpoint} failed:`, detail);
         throw new Error(detail);
       }
     }
-    console.error('Processing failed:', error);
+    console.error(`${endpoint} failed:`, error);
     throw error;
   }
+};
+
+// Process the asset registry — POST /process-asset
+// `mappingOverrides`, if provided, is sent as the `mappings_json` field in
+// the same shape /default-mappings returns, and the backend merges it over
+// the built-in mapping tables for this run only.
+export const processAssetFile = (file, mappingOverrides = null) => {
+  const extraFields = mappingOverrides ? { mappings_json: JSON.stringify(mappingOverrides) } : {};
+  return postForFile('/process-asset', file, extraFields, 'assets_load_template_filled.xlsx');
+};
+
+// Process the credit registry — POST /process-credit
+// No mapping overrides supported on this route — the backend hardcodes the
+// Profile/Segment field mapping for now.
+export const processCreditFile = (file) => {
+  return postForFile('/process-credit', file, {}, 'credit_data_load_filled.xlsx');
 };
 
 export default apiClient;

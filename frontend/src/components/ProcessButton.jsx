@@ -1,14 +1,16 @@
 import React from 'react';
 import { ClipLoader } from 'react-spinners';
+import { PROCESS_OPTIONS } from './ProcessSelector';
 
 const ProcessButton = ({ onClick, isProcessing, file, selectedProcess, isConnected }) => {
-  const disabled = !file || isProcessing || !isConnected || selectedProcess !== 'ASSETS';
+  const isSupported = PROCESS_OPTIONS[selectedProcess]?.status === 'active';
+  const disabled = !file || isProcessing || !isConnected || !isSupported;
 
   const label = () => {
     if (isProcessing) return 'Processing...';
     if (!isConnected) return 'Backend not connected';
     if (!file) return 'Upload a file first';
-    if (selectedProcess !== 'ASSETS') return `${selectedProcess} coming soon`;
+    if (!isSupported) return `${PROCESS_OPTIONS[selectedProcess]?.label ?? selectedProcess} coming soon`;
     return 'Process File';
   };
 
