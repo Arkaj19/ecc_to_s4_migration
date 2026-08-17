@@ -149,6 +149,7 @@ import json
 import io
 from asset_processor import process_asset_registry
 from credit_processor import process_credit_registry
+from ap_processor import process_ap_registry
 import mappings
 import os
  
@@ -165,7 +166,12 @@ CREDIT_TEMPLATE_PATH = os.path.join(
     "templates",
     "Credit Data Load - SIT2.xlsx"
 )
- 
+
+AP_TEMPLATE_PATH = os.path.join(
+    BASE_DIR,
+    "templates",
+    "AP Data Load Sheet - SIT2.xlsx"
+)
  
 app = FastAPI(title="ECC to S/4 HANA FICO Data Migrator Backend")
  
@@ -342,6 +348,56 @@ async def process_credit(
         raise HTTPException(
             status_code=500,
             detail=f"Error processing credit registry: {str(e)}"
+        )
+
+@app.post("/process-ap")
+async def process_ap(
+    file: UploadFile = File(...)
+):
+    """
+    POST endpoint that takes the AP Registry Excel file
+    and returns the populated AP Data Load template.
+    """
+
+    # Verify file type
+    if not file.filename.endswith((".xlsx", ".xls")):
+        raise HTTPException(
+            status_code=400,
+            detail="Only Excel files (.xlsx, .xls) are accepted."
+        )
+
+    try:
+        # Read uploaded AP Registry into memory
+        file_bytes = await file.read()
+        reg_io = io.BytesIO(file_bytes)
+
+        # Process AP Registry
+        out_buf = process_ap_registry(
+            reg_io,
+            template_path=AP_TEMPLATE_PATH
+        )
+
+        # Return populated AP Data Load template
+        return StreamingResponse(
+            out_buf,
+            media_type=(
+                "application/vnd.openxmlformats-officedocument"
+                ".spreadsheetml.sheet"
+            ),
+            headers={
+                "Content-Disposition":
+                    "attachment; "
+                    "filename=AP_Data_Load_SIT2_filled.xlsx"
+            }
+        )
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error processing AP registry: {str(e)}"
         )
  
 if __name__ == "__main__":
