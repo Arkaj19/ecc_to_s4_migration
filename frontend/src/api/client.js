@@ -36,10 +36,15 @@ export const getDefaultMappings = async () => {
 
 /**
  * Shared by every "upload a registry, get a populated template back" route
- * (/process-asset, /process-credit, and whatever comes next for AP/AR).
- * Resolves to { blob, filename } — filename is read off the server's
- * Content-Disposition header rather than guessed on the frontend, since
- * each route names its output differently.
+ * (/process-asset, /process-credit, /process-ap). Resolves to
+ * { blob, filename, validationErrorCount }:
+ *   - filename comes from the server's Content-Disposition header rather
+ *     than being guessed on the frontend, since each route names its
+ *     output differently.
+ *   - validationErrorCount comes from X-Validation-Error-Count — the file
+ *     is always generated even when some mandatory fields are missing, so
+ *     this is how the caller knows whether to also fetch the detailed
+ *     report from the matching /validate-* route.
  */
 const postForFile = async (endpoint, file, extraFields = {}, fallbackFilename = 'output.xlsx') => {
   const formData = new FormData();
@@ -57,8 +62,9 @@ const postForFile = async (endpoint, file, extraFields = {}, fallbackFilename = 
     const disposition = response.headers['content-disposition'] || '';
     const match = disposition.match(/filename="?([^"]+)"?/);
     const filename = match ? match[1] : fallbackFilename;
+    const validationErrorCount = parseInt(response.headers['x-validation-error-count'] || '0', 10);
 
-    return { blob: response.data, filename };
+    return { blob: response.data, filename, validationErrorCount };
   } catch (error) {
     // With responseType: 'blob', a FastAPI error response (400/500 JSON)
     // arrives as a Blob too, so error.message is useless on its own —
@@ -78,6 +84,32 @@ const postForFile = async (endpoint, file, extraFields = {}, fallbackFilename = 
     }
     console.error(`${endpoint} failed:`, error);
     throw error;
+  }
+};
+
+/**
+ * Shared by every /validate-* route. These return a plain JSON report —
+ * { valid, errors: [{sheet, column, missing_rows, message}] } — rather
+ * than a file, so error handling is simpler than postForFile: axios
+ * already parses a FastAPI error body normally since responseType stays
+ * the default 'json'.
+ */
+const postForJson = async (endpoint, file, extraFields = {}) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  Object.entries(extraFields).forEach(([key, value]) => {
+    if (value !== null && value !== undefined) formData.append(key, value);
+  });
+
+  try {
+    const response = await apiClient.post(endpoint, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+  } catch (error) {
+    const detail = error.response?.data?.detail;
+    console.error(`${endpoint} failed:`, detail || error);
+    throw new Error(detail || 'Validation check failed.');
   }
 };
 
@@ -103,5 +135,18 @@ export const processCreditFile = (file) => {
 export const processApFile = (file) => {
   return postForFile('/process-ap', file, {}, 'AP_Data_Load_SIT2_filled.xlsx');
 };
+
+// Detailed mandatory-field validation reports — same underlying mapping
+// logic as the matching /process-* route, but returns the report instead
+// of the file. Only worth calling when processFile's validationErrorCount
+// came back > 0.
+export const validateAssetFile = (file, mappingOverrides = null) => {
+  const extraFields = mappingOverrides ? { mappings_json: JSON.stringify(mappingOverrides) } : {};
+  return postForJson('/validate-asset', file, extraFields);
+};
+
+export const validateCreditFile = (file) => postForJson('/validate-credit', file);
+
+export const validateApFile = (file) => postForJson('/validate-ap', file);
 
 export default apiClient;
