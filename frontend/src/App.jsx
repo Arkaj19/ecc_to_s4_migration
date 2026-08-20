@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 
+import Header from './components/Header';
+import Footer from './components/Footer';
 import FileUpload from './components/FileUpload';
 import ProcessSelector, { PROCESS_OPTIONS } from './components/ProcessSelector';
 import DataPreview from './components/DataPreview';
@@ -8,17 +10,33 @@ import StatusMessage from './components/StatusMessage';
 import ProcessButton from './components/ProcessButton';
 import DownloadButton from './components/DownloadButton';
 import StageTracker from './components/StageTracker';
+import ValidationReport from './components/ValidationReport';
 
-import { checkHealth, processAssetFile, processCreditFile, processApFile, getDefaultMappings } from './api/client';
+import {
+  checkHealth,
+  processAssetFile,
+  processCreditFile,
+  processApFile,
+  validateAssetFile,
+  validateCreditFile,
+  validateApFile,
+  getDefaultMappings,
+} from './api/client';
 import { previewExcelFile } from './utils/excelPreview';
 
-// Maps each active process type to its API call. Add an entry here (and
-// a matching export in api/client.js) whenever a new process type flips
+// Maps each active process type to its API calls. Add an entry here (and
+// matching exports in api/client.js) whenever a new process type flips
 // from 'coming-soon' to 'active' in ProcessSelector's PROCESS_OPTIONS.
 const PROCESS_HANDLERS = {
   ASSETS: processAssetFile,
   CREDIT: processCreditFile,
   AP: processApFile,
+};
+
+const VALIDATE_HANDLERS = {
+  ASSETS: validateAssetFile,
+  CREDIT: validateCreditFile,
+  AP: validateApFile,
 };
 
 function App() {
@@ -31,6 +49,8 @@ function App() {
   const [processError, setProcessError] = useState(false);
   const [processedFile, setProcessedFile] = useState(null);
   const [downloaded, setDownloaded] = useState(false);
+  const [validationReport, setValidationReport] = useState(null);
+  const [validationLoading, setValidationLoading] = useState(false);
   const [mappings, setMappings] = useState(null);
   const [mappingsLoading, setMappingsLoading] = useState(false);
   const [status, setStatus] = useState({ type: null, message: null, details: null });
@@ -71,6 +91,8 @@ function App() {
     setPreviewError(false);
     setProcessError(false);
     setDownloaded(false);
+    setValidationReport(null);
+    setValidationLoading(false);
     setStatus({ type: null, message: null });
 
     if (!uploadedFile) return;
@@ -111,6 +133,7 @@ function App() {
     setProcessError(false);
     setProcessedFile(null);
     setDownloaded(false);
+    setValidationReport(null);
     setStatus({ type: 'info', message: `Processing ${file.name}...` });
 
     try {
@@ -123,6 +146,25 @@ function App() {
         message: 'Processing complete',
         details: `Generated ${PROCESS_OPTIONS[selectedProcess].label.toLowerCase()} load sheet with ${previewData?.totalRows || 0} rows`,
       });
+
+      // The file is generated either way — X-Validation-Error-Count (read
+      // into result.validationErrorCount by api/client.js) tells us
+      // whether it's worth the extra round trip to fetch the detailed
+      // per-column report. No warnings → skip it entirely.
+      if (result.validationErrorCount > 0) {
+        setValidationLoading(true);
+        try {
+          const report = await VALIDATE_HANDLERS[selectedProcess](file);
+          setValidationReport(report);
+        } catch {
+          // Validation detail fetch failing shouldn't block the user from
+          // downloading the file they already successfully generated.
+        } finally {
+          setValidationLoading(false);
+        }
+      } else {
+        setValidationReport({ valid: true, errors: [] });
+      }
     } catch (error) {
       setProcessError(true);
       setStatus({ type: 'error', message: 'Processing failed', details: error.message });
@@ -162,35 +204,14 @@ function App() {
   ];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+    <div className="min-h-screen flex flex-col bg-gradient-to-br from-gray-50 to-gray-100">
+      <Header isConnected={isConnected} connectionChecked={connectionChecked} />
 
-        <header className="mb-6">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-5">
-            <div>
-              <h1 className="text-2xl sm:text-3xl font-bold text-blue-600">
-                ECC → S/4 Migration Tool
-              </h1>
-              <p className="text-gray-600 text-sm mt-1">
-                Convert legacy ECC registry data to S/4 HANA load sheets
-              </p>
-            </div>
-            <div className="flex items-center space-x-2 bg-white px-3 py-1.5 rounded-full shadow-sm">
-              <span
-                className={`inline-block w-2 h-2 rounded-full ${
-                  !connectionChecked ? 'bg-orange-400 animate-pulse' : isConnected ? 'bg-green-500' : 'bg-red-500'
-                }`}
-              ></span>
-              <span className="text-xs text-gray-600">
-                {!connectionChecked ? 'Checking...' : isConnected ? 'Connected' : 'Disconnected'}
-              </span>
-            </div>
-          </div>
+      <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
 
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 px-5 py-4">
-            <StageTracker stages={stages} />
-          </div>
-        </header>
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 px-5 py-4 mb-6">
+          <StageTracker stages={stages} />
+        </div>
 
         {status.message && (
           <div className="mb-4 animate-slideDown">
@@ -238,6 +259,10 @@ function App() {
               )}
             </div>
 
+            {(validationReport || validationLoading) && (
+              <ValidationReport report={validationReport} isLoading={validationLoading} />
+            )}
+
             <MappingDisplay mappings={mappings} isLoading={mappingsLoading} />
           </div>
 
@@ -278,7 +303,9 @@ function App() {
 
         </div>
 
-      </div>
+      </main>
+
+      <Footer />
 
       <style>{`
         @keyframes slideDown {
