@@ -1,4 +1,3 @@
-
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,6 +27,21 @@ AP_TEMPLATE_PATH = os.path.join(
     BASE_DIR,
     "templates",
     "AP Data Load Sheet - SIT2.xlsx"
+)
+
+# Reference data (not templates) used for Supplier/Customer -> Business
+# Partner lookups (BUT sheet) and Customer -> Credit Rep Group lookups
+# (DAP Clerk Codes), shared by the Credit and AP processors.
+BUT_REFERENCE_PATH = os.path.join(
+    BASE_DIR,
+    "reference_data",
+    "but0id_qs4_500.xlsx"
+)
+
+CLERK_CODES_PATH = os.path.join(
+    BASE_DIR,
+    "reference_data",
+    "DAP_CODE.xlsx"
 )
  
 app = FastAPI(title="ECC to S/4 HANA FICO Data Migrator Backend")
