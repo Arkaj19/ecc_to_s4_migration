@@ -800,10 +800,11 @@ def process_credit_registry(
             # KUNNR in the output is the S/4 Business Partner, resolved
             # from the registry's raw Customer Number via the BUT sheet
             # — not the raw registry value itself.
-            "customer_number": map_business_partner(
-                customer_but_mapping,
-                raw_customer_number
-            ),
+            # "customer_number": map_business_partner(
+            #     customer_but_mapping,
+            #     raw_customer_number
+            # ),
+            "customer_number": raw_customer_number,
 
             # Kept for traceability (validation messages, source lookups)
             # — this is the key the BUT and Clerk Codes lookups both use.
