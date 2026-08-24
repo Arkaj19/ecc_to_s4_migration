@@ -1365,8 +1365,11 @@ def process_ap_registry(
             "DOCLN": "",
 
             # Supplier -> Business Partner (via BUT reference sheet)
-            "LIFNR": map_business_partner(
-                vendor_but_mapping,
+            # "LIFNR": map_business_partner(
+            #     vendor_but_mapping,
+            #     row_data.get("Supplier")
+            # ),
+            "LIFNR": clean_string(
                 row_data.get("Supplier")
             ),
 
@@ -1587,8 +1590,11 @@ def process_ap_registry(
             "DOCLN": "",
 
             # Supplier -> Business Partner (via BUT reference sheet)
-            "LIFNR": map_business_partner(
-                vendor_but_mapping,
+            # "LIFNR": map_business_partner(
+            #     vendor_but_mapping,
+            #     row_data.get("Supplier")
+            # ),
+            "LIFNR": clean_string(
                 row_data.get("Supplier")
             ),
 
