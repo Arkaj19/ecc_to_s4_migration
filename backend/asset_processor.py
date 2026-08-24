@@ -30,11 +30,53 @@ def clean_int(val, default=""):
     except (ValueError, TypeError):
         return str(val).strip()
 
+# def clean_float(val, default=None):
+#     if pd.isna(val) or val is None:
+#         return default
+#     try:
+#         return float(val)
+#     except (ValueError, TypeError):
+#         return val
+
 def clean_float(val, default=None):
+    """
+    Convert a value to float, including SAP/Excel "accounting format"
+    text such as "5,114.43-" or "(5,114.43)" for negative numbers.
+
+    Registry exports commonly render negatives with a trailing minus sign
+    and/or thousands separators rather than a leading minus. Python's
+    float() can't parse either of those directly — float("5,114.43-")
+    raises ValueError — so without this, such values silently fell
+    through to the except branch and were returned completely unchanged:
+    the literal text "5,114.43-" got written straight into the output
+    cell instead of the number -5114.43, which is why the minus sign
+    still showed up trailing in the generated file regardless of the
+    template's own number format.
+    """
     if pd.isna(val) or val is None:
         return default
-    try:
+
+    if isinstance(val, (int, float)):
         return float(val)
+
+    text = str(val).strip()
+    if not text:
+        return default
+
+    negative = False
+
+    if text.endswith('-'):
+        negative = True
+        text = text[:-1].strip()
+    elif text.startswith('(') and text.endswith(')'):
+        negative = True
+        text = text[1:-1].strip()
+
+    text = text.replace(',', '')
+
+    try:
+        num = float(text)
+        return -num if negative else num
     except (ValueError, TypeError):
         return val
 
@@ -162,7 +204,7 @@ def process_asset_registry(registry_file, template_path="templates/assets_load_t
         s4_cocd = map_cocd(ecc_cocd)
         
         ecc_asset = clean_string(row.get('Asset'))
-        print(ecc_asset)
+        # print(ecc_asset)
         # Standard subnumber is 0
         s4_subnumber = "0"
         
