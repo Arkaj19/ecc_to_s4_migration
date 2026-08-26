@@ -900,10 +900,10 @@ def process_credit_registry(
                 mapped_values["OWN_RATING"] = ""
 
                 # Hardcoded for now
-                mapped_values["CHECK_RULE"] = "01"
+                mapped_values["CHECK_RULE"] = "02"
 
                 # Hardcoded
-                mapped_values["LIMIT_RULE"] = "SAP_ALL"
+                mapped_values["LIMIT_RULE"] = "CRED_SCORE"
 
                 # Blank as specified
                 mapped_values["RATING_VAL_DATE"] = ""
