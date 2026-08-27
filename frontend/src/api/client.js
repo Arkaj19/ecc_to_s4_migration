@@ -63,8 +63,9 @@ const postForFile = async (endpoint, file, extraFields = {}, fallbackFilename = 
     const match = disposition.match(/filename="?([^"]+)"?/);
     const filename = match ? match[1] : fallbackFilename;
     const validationErrorCount = parseInt(response.headers['x-validation-error-count'] || '0', 10);
+    const skippedSheetsCount = parseInt(response.headers['x-skipped-sheets-count'] || '0', 10);
 
-    return { blob: response.data, filename, validationErrorCount };
+    return { blob: response.data, filename, validationErrorCount, skippedSheetsCount };
   } catch (error) {
     // With responseType: 'blob', a FastAPI error response (400/500 JSON)
     // arrives as a Blob too, so error.message is useless on its own —
@@ -135,6 +136,18 @@ export const processCreditFile = (file) => {
 export const processApFile = (file) => {
   return postForFile('/process-ap', file, {}, 'AP_Data_Load_SIT2_filled.xlsx');
 };
+
+// Process the AR registry — POST /process-ar
+export const processArFile = (file) => {
+  return postForFile('/process-ar', file, {}, 'ar_data_load_filled.xlsx');
+};
+
+// Detailed mandatory-field validation for AR — POST /validate-ar
+// Note: the backend only detects gaps when the AR template uses the
+// standard Row 5 technical-header layout; if it falls back to Row 1
+// headers, this will correctly report valid:true for a template it
+// isn't actually able to check yet (see ar_processor.py).
+export const validateArFile = (file) => postForJson('/validate-ar', file);
 
 // Detailed mandatory-field validation reports — same underlying mapping
 // logic as the matching /process-* route, but returns the report instead
