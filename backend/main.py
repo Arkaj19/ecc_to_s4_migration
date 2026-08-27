@@ -6,6 +6,7 @@ import io
 from asset_processor import process_asset_registry, RegistryMismatchError as AssetMismatchError
 from credit_processor import process_credit_registry, RegistryMismatchError as CreditMismatchError
 from ap_processor import process_ap_registry, RegistryMismatchError as APMismatchError
+from ar_processor import process_ar_registry, RegistryMismatchError as ARMismatchError
 import mappings
 import os
  
@@ -28,6 +29,9 @@ AP_TEMPLATE_PATH = os.path.join(
     "templates",
     "AP Data Load Sheet - SIT2.xlsx"
 )
+
+# NEW: AR template path
+AR_TEMPLATE_PATH = os.path.join(BASE_DIR, "templates", "AR_TEMPLATE.xlsx")
 
 # Reference data (not templates) used for Supplier/Customer -> Business
 # Partner lookups (BUT sheet) and Customer -> Credit Rep Group lookups
@@ -480,6 +484,108 @@ async def validate_ap(
         raise HTTPException(
             status_code=500,
             detail=f"Error validating AP registry: {str(e)}"
+        )
+
+@app.post("/process-ar")
+async def process_ar(
+    file: UploadFile = File(...)
+):
+    """
+    POST endpoint that takes the AR Registry Excel file
+    and returns the populated AR Data Load template.
+    """
+    if not file.filename.endswith((".xlsx", ".xls")):
+        raise HTTPException(
+            status_code=400,
+            detail="Only Excel files (.xlsx, .xls) are accepted."
+        )
+
+    try:
+        file_bytes = await file.read()
+        reg_io = io.BytesIO(file_bytes)
+
+        out_buf, validation_errors = process_ar_registry(
+            reg_io,
+            template_path=AR_TEMPLATE_PATH
+        )
+
+        return StreamingResponse(
+            out_buf,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={
+                "Content-Disposition": "attachment; filename=AR_Data_Load_filled.xlsx",
+                "X-Validation-Error-Count": str(len(validation_errors)),
+                "Access-Control-Expose-Headers": "X-Validation-Error-Count",
+            }
+        )
+
+    except ARMismatchError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error processing AR registry: {str(e)}"
+        )
+
+
+# NEW: validate-ar endpoint
+@app.post("/validate-ar")
+async def validate_ar(
+    file: UploadFile = File(...)
+):
+    """
+    POST endpoint that runs the same mapping logic as /process-ar
+    but returns a JSON validation report instead of the file.
+    """
+    if not file.filename.endswith((".xlsx", ".xls")):
+        raise HTTPException(
+            status_code=400,
+            detail="Only Excel files (.xlsx, .xls) are accepted."
+        )
+
+    try:
+        file_bytes = await file.read()
+        reg_io = io.BytesIO(file_bytes)
+
+        _out_buf, validation_errors = process_ar_registry(
+            reg_io,
+            template_path=AR_TEMPLATE_PATH
+        )
+
+        # Collapse errors per sheet and field_label (like the other validators)
+        counts = {}
+        for err in validation_errors:
+            key = (err['sheet'], err['field_label'])
+            counts[key] = counts.get(key, 0) + 1
+
+        errors = [
+            {
+                "sheet": sheet,
+                "column": column,
+                "missing_rows": count,
+                "message": (
+                    f"Mandatory column {column} of sheet {sheet} has "
+                    f"{count} missing row{'s' if count != 1 else ''}."
+                ),
+            }
+            for (sheet, column), count in counts.items()
+        ]
+
+        return {
+            "valid": len(errors) == 0,
+            "errors": errors,
+        }
+
+    except ARMismatchError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error validating AR registry: {str(e)}"
         )
 
 if __name__ == "__main__":
