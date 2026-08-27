@@ -1,11 +1,16 @@
 import React from 'react';
 
 /**
- * ValidationReport — shows which mandatory columns still have missing data
- * after processing. The file is generated either way (the backend never
- * blocks on this), so this is a data-quality warning, not an error state:
- * amber, not red. Errors are grouped by sheet since that's how the
- * underlying template is structured and how someone would go fix them.
+ * ValidationReport — shows two distinct kinds of data-quality signal after
+ * processing, both from routes that generate the file either way:
+ *
+ *  - skipped sheets: entire tabs in the uploaded workbook that didn't
+ *    match the expected column shape, so none of their rows made it into
+ *    the output at all. This is flagged in red — it's not a "some fields
+ *    are blank" warning, it's "some of your data isn't in the file."
+ *  - mandatory field gaps: rows that did make it in, but are missing a
+ *    value the target template marks as required. Amber, since the file
+ *    was still generated.
  */
 const ValidationReport = ({ report, isLoading }) => {
   if (isLoading) {
@@ -19,15 +24,48 @@ const ValidationReport = ({ report, isLoading }) => {
 
   if (!report) return null;
 
-  if (report.valid) {
+  const skippedSheets = report.skipped_sheets || [];
+  const hasFieldErrors = !report.valid && report.errors?.length > 0;
+
+  if (skippedSheets.length === 0 && !hasFieldErrors) {
     return (
       <div className="flex items-center gap-2 text-xs text-green-700 px-1">
         <span className="w-1.5 h-1.5 rounded-full bg-green-500"></span>
-        All mandatory fields are populated.
+        All sheets included, all mandatory fields populated.
       </div>
     );
   }
 
+  return (
+    <div className="space-y-3">
+      {skippedSheets.length > 0 && (
+        <div className="border border-red-200 bg-red-50 rounded-lg overflow-hidden">
+          <div className="flex items-center gap-2 px-4 py-2.5 border-b border-red-200">
+            <span className="w-1.5 h-1.5 rounded-full bg-red-500"></span>
+            <h4 className="text-sm font-medium text-red-900">
+              Sheets not included
+            </h4>
+            <span className="text-xs text-red-700 ml-auto">
+              {skippedSheets.length} sheet{skippedSheets.length !== 1 ? 's' : ''}
+            </span>
+          </div>
+          <div className="divide-y divide-red-100">
+            {skippedSheets.map((s) => (
+              <div key={s.sheet} className="px-4 py-2.5">
+                <p className="text-sm text-gray-800">{s.sheet}</p>
+                <p className="text-xs text-red-700 mt-0.5">{s.reason}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {hasFieldErrors && <MandatoryFieldPanel report={report} />}
+    </div>
+  );
+};
+
+const MandatoryFieldPanel = ({ report }) => {
   const bySheet = report.errors.reduce((acc, err) => {
     (acc[err.sheet] ??= []).push(err);
     return acc;

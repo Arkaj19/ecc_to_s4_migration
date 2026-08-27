@@ -6,7 +6,7 @@ import React from 'react';
 export const PROCESS_OPTIONS = {
   ASSETS: { label: 'Assets', status: 'active', description: 'Asset Master & Values Migration' },
   AP: { label: 'Accounts Payable', status: 'active', description: 'Vendor & Invoice Migration' },
-  AR: { label: 'Accounts Receivable', status: 'coming-soon', description: 'Customer & Invoice Migration' },
+  AR: { label: 'Accounts Receivable', status: 'active', description: 'Customer & Invoice Migration' },
   CREDIT: { label: 'Credit Management', status: 'active', description: 'Credit Limit & Risk Migration' },
 };
 

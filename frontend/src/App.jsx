@@ -17,9 +17,11 @@ import {
   processAssetFile,
   processCreditFile,
   processApFile,
+  processArFile,
   validateAssetFile,
   validateCreditFile,
   validateApFile,
+  validateArFile,
   getDefaultMappings,
 } from './api/client';
 import { previewExcelFile } from './utils/excelPreview';
@@ -31,12 +33,17 @@ const PROCESS_HANDLERS = {
   ASSETS: processAssetFile,
   CREDIT: processCreditFile,
   AP: processApFile,
+  AR: processArFile,
 };
 
+// A process type missing from this map means "validation not implemented
+// for it yet" and must be handled as "don't claim anything" wherever this
+// map is read — not "assume it passed".
 const VALIDATE_HANDLERS = {
   ASSETS: validateAssetFile,
   CREDIT: validateCreditFile,
   AP: validateApFile,
+  AR: validateArFile,
 };
 
 function App() {
@@ -147,14 +154,25 @@ function App() {
         details: `Generated ${PROCESS_OPTIONS[selectedProcess].label.toLowerCase()} load sheet with ${previewData?.totalRows || 0} rows`,
       });
 
-      // The file is generated either way — X-Validation-Error-Count (read
-      // into result.validationErrorCount by api/client.js) tells us
-      // whether it's worth the extra round trip to fetch the detailed
-      // per-column report. No warnings → skip it entirely.
-      if (result.validationErrorCount > 0) {
+      // The file is generated either way — X-Validation-Error-Count and
+      // X-Skipped-Sheets-Count (read into result.validationErrorCount /
+      // result.skippedSheetsCount by api/client.js) tell us whether it's
+      // worth the extra round trip to fetch the detailed report.
+      //
+      // Some process types (currently AR) have no /validate-* route at
+      // all yet, since their backend processor doesn't compute a
+      // mandatory-field report — VALIDATE_HANDLERS simply won't have an
+      // entry for them. That must read as "can't check this yet", not
+      // "checked and clean" — result.validationErrorCount would read 0
+      // for AR regardless, since the header it comes from is never sent.
+      const validateFn = VALIDATE_HANDLERS[selectedProcess];
+
+      if (!validateFn) {
+        setValidationReport(null);
+      } else if (result.validationErrorCount > 0 || result.skippedSheetsCount > 0) {
         setValidationLoading(true);
         try {
-          const report = await VALIDATE_HANDLERS[selectedProcess](file);
+          const report = await validateFn(file);
           setValidationReport(report);
         } catch {
           // Validation detail fetch failing shouldn't block the user from
@@ -163,7 +181,7 @@ function App() {
           setValidationLoading(false);
         }
       } else {
-        setValidationReport({ valid: true, errors: [] });
+        setValidationReport({ valid: true, errors: [], skipped_sheets: [] });
       }
     } catch (error) {
       setProcessError(true);
@@ -261,6 +279,13 @@ function App() {
 
             {(validationReport || validationLoading) && (
               <ValidationReport report={validationReport} isLoading={validationLoading} />
+            )}
+
+            {processedFile && !validationLoading && !VALIDATE_HANDLERS[selectedProcess] && (
+              <div className="flex items-center gap-2 text-xs text-gray-500 px-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-gray-400"></span>
+                Mandatory-field validation isn't available yet for {PROCESS_OPTIONS[selectedProcess]?.label}.
+              </div>
             )}
 
             <MappingDisplay mappings={mappings} isLoading={mappingsLoading} />
