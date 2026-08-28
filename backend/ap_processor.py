@@ -1373,6 +1373,7 @@ REQUIRED_AP_COLUMNS = [
 AP_TECHNICAL_TO_CANONICAL = {
     "BUKRS": "Company Code",
     "LIFNR": "Supplier",
+    "BUZEI": "Line Item", ### New added by me
     "BLDAT": "Document Date",
     "WAERS": "Currency",
     "XBLNR": "Reference",
@@ -1776,6 +1777,10 @@ def process_ap_registry(
             ecc_company_code
         )
 
+        xblnr_value = clean_string(row_data.get("Reference"))
+        if not xblnr_value:
+            xblnr_value = "No reference in ECC"
+
         # -----------------------------------------------------
         # Tax Code based on Company Code
         # -----------------------------------------------------
@@ -1850,12 +1855,15 @@ def process_ap_registry(
             "BUKRS": s4_company_code,
 
             # Reference
-            "XBLNR": clean_string(
-                row_data.get("Reference")
-            ),
+            # "XBLNR": clean_string(
+            #     row_data.get("Reference")
+            # ),
+            "XBLNR": xblnr_value,
 
             # Line Item Number
-            "DOCLN": "",
+            "DOCLN": clean_string(
+                row_data.get("Line Item")
+            ),
 
             # Supplier -> Business Partner (via BUT reference sheet)
             # "LIFNR": map_business_partner(
@@ -2062,6 +2070,11 @@ def process_ap_registry(
             ecc_company_code
         )
 
+        # Compute XBLNR with fallback (repeat)
+        xblnr_value = clean_string(row_data.get("Reference"))
+        if not xblnr_value:
+            xblnr_value = "No reference in ECC"
+
         # -----------------------------------------------------
         # Withholding Tax mapping
         #
@@ -2074,12 +2087,16 @@ def process_ap_registry(
             "BUKRS": s4_company_code,
 
             # Reference
-            "XBLNR": clean_string(
-                row_data.get("Reference")
-            ),
+            # "XBLNR": clean_string(
+            #     row_data.get("Reference")
+            # ),
+            "XBLNR": xblnr_value,
 
             # Explicitly blank
-            "DOCLN": "",
+            # Line Item Number
+            "DOCLN": clean_string(
+                row_data.get("Line Item")
+            ),
 
             # Supplier -> Business Partner (via BUT reference sheet)
             # "LIFNR": map_business_partner(

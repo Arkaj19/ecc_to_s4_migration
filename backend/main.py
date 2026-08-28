@@ -170,10 +170,16 @@ async def process_asset(
         reg_io = io.BytesIO(file_bytes)
        
         # Process the registry
+        # out_buf, validation_errors = process_asset_registry(
+        #     reg_io,
+        #     template_path=TEMPLATE_PATH,
+        #     custom_mappings=custom_maps
+        # )
         out_buf, validation_errors = process_asset_registry(
             reg_io,
             template_path=TEMPLATE_PATH,
-            custom_mappings=custom_maps
+            custom_mappings=custom_maps,
+            sheet_names=['US01', 'US06', 'CA01']   # <-- add this
         )
        
         # Return populated template. The file is fully written regardless
@@ -200,22 +206,75 @@ async def process_asset(
         raise HTTPException(status_code=500, detail=f"Error processing asset registry: {str(e)}")
 
 
+# @app.post("/validate-asset")
+# async def validate_asset(
+#     file: UploadFile = File(...),
+#     mappings_json: str = Form(None)
+# ):
+#     """
+#     POST endpoint that runs the exact same mapping logic as /process-asset
+#     but returns a JSON validation report instead of the file itself: one
+#     entry per (sheet, mandatory column) that has at least one missing row,
+#     with a ready-to-display message so the frontend doesn't have to build
+#     its own copy.
+#     """
+#     if not file.filename.endswith(('.xlsx', '.xls')):
+#         raise HTTPException(status_code=400, detail="Only Excel files (.xlsx, .xls) are accepted.")
+
+#     custom_maps = parse_custom_mappings(mappings_json)
+
+#     try:
+#         file_bytes = await file.read()
+#         reg_io = io.BytesIO(file_bytes)
+
+#         _out_buf, validation_errors = process_asset_registry(
+#             reg_io,
+#             template_path=TEMPLATE_PATH,
+#             custom_mappings=custom_maps
+#         )
+
+#         # Collapse row-level errors down to one count per (sheet, column) —
+#         # that's all the frontend needs to show per your spec.
+#         counts = {}
+#         for err in validation_errors:
+#             key = (err['sheet'], err['field_label'])
+#             counts[key] = counts.get(key, 0) + 1
+
+#         errors = [
+#             {
+#                 "sheet": sheet,
+#                 "column": column,
+#                 "missing_rows": count,
+#                 "message": (
+#                     f"Mandatory column {column} of sheet {sheet} has "
+#                     f"{count} missing row{'s' if count != 1 else ''}."
+#                 ),
+#             }
+#             for (sheet, column), count in counts.items()
+#         ]
+
+#         return {
+#             "valid": len(errors) == 0,
+#             "errors": errors,
+#         }
+#     except AssetMismatchError as e:
+#         raise HTTPException(status_code=400, detail=str(e))
+#     except Exception as e:
+#         import traceback
+#         traceback.print_exc()
+#         raise HTTPException(status_code=500, detail=f"Error validating asset registry: {str(e)}")
+
 @app.post("/validate-asset")
 async def validate_asset(
     file: UploadFile = File(...),
-    mappings_json: str = Form(None)
+    mappings_json: str = Form(None),
+    sheet_names: str = Form("US01,US06,CA01")
 ):
-    """
-    POST endpoint that runs the exact same mapping logic as /process-asset
-    but returns a JSON validation report instead of the file itself: one
-    entry per (sheet, mandatory column) that has at least one missing row,
-    with a ready-to-display message so the frontend doesn't have to build
-    its own copy.
-    """
     if not file.filename.endswith(('.xlsx', '.xls')):
         raise HTTPException(status_code=400, detail="Only Excel files (.xlsx, .xls) are accepted.")
 
     custom_maps = parse_custom_mappings(mappings_json)
+    sheet_list = [s.strip() for s in sheet_names.split(",") if s.strip()]
 
     try:
         file_bytes = await file.read()
@@ -224,11 +283,10 @@ async def validate_asset(
         _out_buf, validation_errors = process_asset_registry(
             reg_io,
             template_path=TEMPLATE_PATH,
-            custom_mappings=custom_maps
+            custom_mappings=custom_maps,
+            sheet_names=sheet_list
         )
 
-        # Collapse row-level errors down to one count per (sheet, column) —
-        # that's all the frontend needs to show per your spec.
         counts = {}
         for err in validation_errors:
             key = (err['sheet'], err['field_label'])
@@ -247,10 +305,8 @@ async def validate_asset(
             for (sheet, column), count in counts.items()
         ]
 
-        return {
-            "valid": len(errors) == 0,
-            "errors": errors,
-        }
+        return {"valid": len(errors) == 0, "errors": errors}
+
     except AssetMismatchError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
