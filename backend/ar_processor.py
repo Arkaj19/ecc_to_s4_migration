@@ -2,6 +2,7 @@
 
 import io
 import datetime
+import copy
 
 import pandas as pd
 import openpyxl
@@ -11,6 +12,7 @@ from reference_mappings import load_but_mapping, map_business_partner
 #     map_business_partner,
 #     get_s4_payment_terms,
 # )
+from openpyxl.utils import get_column_letter
 
 # ... (existing constants and helper functions remain unchanged) ...
 
@@ -254,6 +256,46 @@ REQUIRED_AR_COLUMNS = [
     "Amount",
 ]
 
+
+def copy_sheet_headers_and_formatting(source_ws, target_wb, target_sheet_name):
+    """
+    Copies the header rows (rows 1-8) and column formats from source_ws to a new sheet.
+    """
+    # Create a new sheet in the target workbook
+    if target_sheet_name in target_wb.sheetnames:
+        # If sheet already exists, remove it first
+        std = target_wb[target_sheet_name]
+        target_wb.remove(std)
+    
+    target_ws = target_wb.create_sheet(target_sheet_name)
+    
+    # Copy rows 1-8 (headers, technical info, formatting)
+    for row in range(1, 9):  # rows 1-8
+        for col in range(1, source_ws.max_column + 1):
+            source_cell = source_ws.cell(row=row, column=col)
+            target_cell = target_ws.cell(row=row, column=col)
+            
+            # Copy value
+            target_cell.value = source_cell.value
+            
+            # Copy formatting (font, fill, border, etc.)
+            if source_cell.has_style:
+                target_cell.font = copy.copy(source_cell.font)
+                target_cell.border = copy.copy(source_cell.border)
+                target_cell.fill = copy.copy(source_cell.fill)
+                target_cell.number_format = source_cell.number_format
+                target_cell.protection = copy.copy(source_cell.protection)
+                target_cell.alignment = copy.copy(source_cell.alignment)
+    
+    # Copy column widths
+    for col in range(1, source_ws.max_column + 1):
+        col_letter = get_column_letter(col)
+        if source_ws.column_dimensions[col_letter].width:
+            target_ws.column_dimensions[col_letter].width = source_ws.column_dimensions[col_letter].width
+    
+    return target_ws
+
+
 def process_ar_registry(
     registry_file,
     template_path="templates/Merged File all DOC Types.xlsx",
@@ -325,7 +367,16 @@ def process_ar_registry(
         for col in range(1, ws.max_column + 1):
             ws.cell(row=row, column=col).value = None
 
+    # Create a new sheet for Canada data, copying the header and formatting
+    canada_ws = copy_sheet_headers_and_formatting(ws, wb, "Canada Open Items")
+    
+    # Clear any existing data rows in the Canada sheet
+    for row in range(data_start_row, canada_ws.max_row + 1):
+        for col in range(1, canada_ws.max_column + 1):
+            canada_ws.cell(row=row, column=col).value = None
+
     current_row = data_start_row
+    canada_current_row = data_start_row
     validation_errors = []   # list of dicts: sheet, row, field_label
 
     for idx, source_row in df.iterrows():
@@ -355,6 +406,9 @@ def process_ar_registry(
         else:
             tax_code = ""
 
+        # Get the document number (XBLNR from source) to map to XREF1
+        document_number = clean_string(source_row.get("Document Number"))
+
         mapped_values = {
             "BUKRS": s4_company_code,
             "XBLNR": doc_type_mappings["reference_document_number"],
@@ -381,10 +435,12 @@ def process_ar_registry(
             "SKFBT": clean_float(source_row.get("Discount base")),
             "KKBER": clean_string(source_row.get("Credit Control Area")),
             "ZUONR": doc_type_mappings["assignment"],
-            # "RSTGR": get_reason_code(source_row.get("Reason code")),
+            "RSTGR": get_reason_code(source_row.get("Reason code")),
+            # Map the document number from the source to XREF1 (Reference Key 1)
+            "XREF1": document_number,
         }
 
-        # Write values to the template
+        # Write values to the main Customer Open Items sheet (all data)
         for tech_field, value in mapped_values.items():
             if tech_field in technical_columns:
                 ws.cell(
@@ -409,13 +465,27 @@ def process_ar_registry(
             value=reason_code,
         )
 
-        # --- Validation: check mandatory fields ---
+        # ---------------------------------------------------------
+        # Reason Code
+        # Source: Reason code
+        # Target: BL (Column 64)
+        # ---------------------------------------------------------
+
+        reason_code = get_reason_code(
+            source_row.get("Reason code")
+        )
+
+        ws.cell(
+            row=current_row,
+            column=reason_code_column,
+            value=reason_code,
+        )
+
+        # --- Validation: check mandatory fields for main sheet ---
         sheet_name = ws.title
         row_number = current_row
         for field in MANDATORY_FIELDS:
-            # The field may not exist in technical_columns; if not, treat as missing.
             if field not in technical_columns:
-                # The field is missing in the template structure – log an error.
                 validation_errors.append({
                     "sheet": sheet_name,
                     "row": row_number,
@@ -427,7 +497,6 @@ def process_ar_registry(
                     row=current_row,
                     column=technical_columns[field]
                 ).value
-                # Check if value is empty or None
                 if cell_value is None or (isinstance(cell_value, str) and cell_value.strip() == ""):
                     validation_errors.append({
                         "sheet": sheet_name,
@@ -435,6 +504,42 @@ def process_ar_registry(
                         "field_label": field,
                         "value": cell_value,
                     })
+
+        # --- Write to Canada Open Items sheet if company code is CA01 ---
+        if ecc_company_code.upper() == "CA01":
+            for tech_field, value in mapped_values.items():
+                if tech_field in technical_columns:
+                    canada_ws.cell(
+                        row=canada_current_row,
+                        column=technical_columns[tech_field],
+                        value=value,
+                    )
+            
+            # --- Validation for Canada sheet ---
+            canada_sheet_name = canada_ws.title
+            canada_row_number = canada_current_row
+            for field in MANDATORY_FIELDS:
+                if field not in technical_columns:
+                    validation_errors.append({
+                        "sheet": canada_sheet_name,
+                        "row": canada_row_number,
+                        "field_label": field,
+                        "value": None,
+                    })
+                else:
+                    cell_value = canada_ws.cell(
+                        row=canada_current_row,
+                        column=technical_columns[field]
+                    ).value
+                    if cell_value is None or (isinstance(cell_value, str) and cell_value.strip() == ""):
+                        validation_errors.append({
+                            "sheet": canada_sheet_name,
+                            "row": canada_row_number,
+                            "field_label": field,
+                            "value": cell_value,
+                        })
+            
+            canada_current_row += 1
 
         current_row += 1
 
