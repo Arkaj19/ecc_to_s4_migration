@@ -1,375 +1,18 @@
-# import io
-# import datetime
-
-# import pandas as pd
-# import openpyxl
-
-
-# COMPANY_CODE_MAPPING = {
-#     "US01": "1000",
-#     "US06": "1001",
-#     "CA01": "1200",
-# }
-
-# REASON_CODE_MAPPING = {
-#     "DIC": "048",
-#     "FRW": "031",
-#     "PEC": "021",
-#     "PRC": "024",
-#     "SSC": "036",
-#     "UDC": "001",
-#     "UPC": "011",
-# }
-
-
-# def clean_string(value):
-#     if value is None or pd.isna(value):
-#         return ""
-
-#     if isinstance(value, float) and value.is_integer():
-#         return str(int(value))
-
-#     return str(value).strip()
-
-
-# def clean_float(value, default=None):
-#     if value is None or pd.isna(value):
-#         return default
-
-#     try:
-#         return float(value)
-#     except (ValueError, TypeError):
-#         return default
-
-
-# def clean_date(value):
-#     if value is None or pd.isna(value):
-#         return None
-
-#     if isinstance(value, (datetime.date, datetime.datetime)):
-#         return value.date() if isinstance(value, datetime.datetime) else value
-
-#     value_string = str(value).strip()
-
-#     if value_string in ("", "00/00/0000", "00.00.0000", "NaT"):
-#         return None
-
-#     for date_format in (
-#         "%Y-%m-%d %H:%M:%S",
-#         "%Y-%m-%d",
-#         "%m/%d/%Y",
-#         "%d/%m/%Y",
-#         "%d.%m.%Y",
-#         "%Y%m%d",
-#     ):
-#         try:
-#             return datetime.datetime.strptime(
-#                 value_string, date_format
-#             ).date()
-#         except ValueError:
-#             continue
-
-#     return value
-
-
-# def get_s4_company_code(ecc_company_code):
-#     return COMPANY_CODE_MAPPING.get(
-#         clean_string(ecc_company_code).upper(),
-#         "",
-#     )
-
-
-# def get_reason_code(reason_code):
-#     return REASON_CODE_MAPPING.get(
-#         clean_string(reason_code).upper(),
-#         "",
-#     )
-
-
-# def normalize_amount(amount, debit_credit_indicator):
-#     """
-#     S -> positive
-#     H -> negative
-
-#     Positive values are written normally (500), not as '+500'.
-#     """
-#     amount = clean_float(amount)
-
-#     if amount is None:
-#         return None
-
-#     amount = abs(amount)
-#     indicator = clean_string(debit_credit_indicator).upper()
-
-#     if indicator == "S":
-#         return amount
-
-#     if indicator == "H":
-#         return -amount
-
-#     return amount
-
-
-# def get_reference_value(reference):
-#     reference = clean_string(reference)
-#     return reference if reference else "No reference in ECC"
-
-
-# def get_document_type_mappings(
-#     document_type,
-#     assignment,
-#     text,
-#     reference,
-# ):
-#     document_type = clean_string(document_type).upper()
-#     assignment = clean_string(assignment)
-#     text = clean_string(text)
-#     reference = get_reference_value(reference)
-
-#     if document_type == "RV":
-#         return {
-#             "reference_document_number": assignment,
-#             "assignment": "",
-#         }
-
-#     if document_type == "DZ":
-#         return {
-#             "reference_document_number": reference,
-#             "assignment": text,
-#         }
-
-#     return {
-#         "reference_document_number": assignment,
-#         "assignment": assignment,
-#     }
-
-
-# class RegistryMismatchError(ValueError):
-#     pass
-
-
-# REQUIRED_AR_COLUMNS = [
-#     "Company Code",
-#     "Customer",
-#     "Assignment",
-#     "Document Number",
-#     "Document Date",
-#     "Currency",
-#     "Reference",
-#     "Document Type",
-#     "Debit/Credit Ind.",
-#     "Amount",
-# ]
-
-
-# def process_ar_registry(
-#     registry_file,
-#     template_path="templates/Merged File all DOC Types.xlsx",
-# ):
-#     """
-#     Processes the ECC Accounts Receivable registry and populates
-#     the S/4 migration template.
-
-#     The target Document Type is always UE.
-
-#     Explicit business rules:
-#       - RV: Assignment -> Reference Document Number; Assignment blank
-#       - DZ: Text -> Assignment; Reference -> Reference Document Number
-#       - Other: Assignment -> Reference Document Number and Assignment
-#       - Empty Reference -> "No reference in ECC"
-#       - S -> positive Amount
-#       - H -> negative Amount
-#       - Positive amounts are written without a '+' sign
-#       - Reason codes use REASON_CODE_MAPPING
-#     """
-
-#     df = pd.read_excel(registry_file)
-
-#     if df.empty:
-#         raise RegistryMismatchError(
-#             "The uploaded AR registry is empty."
-#         )
-
-#     missing_columns = [
-#         column
-#         for column in REQUIRED_AR_COLUMNS
-#         if column not in df.columns
-#     ]
-
-#     if missing_columns:
-#         raise RegistryMismatchError(
-#             "The uploaded file does not contain the required AR "
-#             f"column(s): {', '.join(missing_columns)}."
-#         )
-
-#     wb = openpyxl.load_workbook(template_path)
-
-#     # Prefer a customer open-item sheet if the template contains one.
-#     # Otherwise use the first worksheet.
-#     if "Customer Open Items" in wb.sheetnames:
-#         ws = wb["Customer Open Items"]
-#     else:
-#         ws = wb[wb.sheetnames[0]]
-
-#     # Technical target field identifiers are normally stored in Row 5.
-#     technical_columns = {}
-
-#     for column in range(1, ws.max_column + 1):
-#         value = clean_string(ws.cell(row=5, column=column).value)
-
-#         if value:
-#             technical_columns[value] = column
-
-#     # Fallback for templates whose technical headers are in Row 1.
-#     if not technical_columns:
-#         for column in range(1, ws.max_column + 1):
-#             value = clean_string(ws.cell(row=1, column=column).value)
-
-#             if value:
-#                 technical_columns[value] = column
-
-#     data_start_row = 9
-
-#     # Remove existing/example data while preserving formatting.
-#     for row in range(data_start_row, ws.max_row + 1):
-#         for column in range(1, ws.max_column + 1):
-#             ws.cell(row=row, column=column).value = None
-
-#     current_row = data_start_row
-
-#     for _, source_row in df.iterrows():
-
-#         ecc_company_code = clean_string(
-#             source_row.get("Company Code")
-#         )
-
-#         s4_company_code = get_s4_company_code(
-#             ecc_company_code
-#         )
-
-#         original_document_type = clean_string(
-#             source_row.get("Document Type")
-#         ).upper()
-
-#         document_type_mappings = get_document_type_mappings(
-#             document_type=original_document_type,
-#             assignment=source_row.get("Assignment"),
-#             text=source_row.get("Text"),
-#             reference=source_row.get("Reference"),
-#         )
-
-#         amount = normalize_amount(
-#             source_row.get("Amount"),
-#             source_row.get("Debit/Credit Ind."),
-#         )
-
-#         if s4_company_code in ("1000", "1001"):
-#             tax_code = "I0"
-#         elif s4_company_code == "1200":
-#             tax_code = "C0"
-#         else:
-#             tax_code = ""
-
-#         mapped_values = {
-#             "BUKRS": s4_company_code,
-
-#             "XBLNR": document_type_mappings[
-#                 "reference_document_number"
-#             ],
-
-#             "KUNNR": clean_string(
-#                 source_row.get("Customer")
-#             ),
-
-#             "GKONT": "9999900000",
-
-#             # Final target document type is always UE.
-#             "BLART": "UE",
-
-#             "BLDAT": clean_date(
-#                 source_row.get("Document Date")
-#             ),
-
-#             "SGTXT": clean_string(
-#                 source_row.get("Text")
-#             ),
-
-#             "WAERS": clean_string(
-#                 source_row.get("Currency")
-#             ),
-
-#             "WRBTR": amount,
-
-#             "MWSKZ": tax_code,
-
-#             "ZTERM": clean_string(
-#                 source_row.get("Terms of Payment")
-#             ),
-
-#             "ZFBDT": clean_date(
-#                 source_row.get("Baseline Payment Dte")
-#             ),
-
-#             "ZBD1T": clean_string(
-#                 source_row.get("Days 1")
-#             ),
-
-#             "ZBD1P": clean_float(
-#                 source_row.get("Disc.percent 1")
-#             ),
-
-#             "ZBD2T": clean_string(
-#                 source_row.get("Days 2")
-#             ),
-
-#             "ZBD2P": clean_float(
-#                 source_row.get("Disc.percent 2")
-#             ),
-
-#             "ZBD3T": clean_string(
-#                 source_row.get("Days Net")
-#             ),
-
-#             "SKFBT": clean_float(
-#                 source_row.get("Discount base")
-#             ),
-
-#             "KKBER": clean_string(
-#                 source_row.get("Credit Control Area")
-#             ),
-
-#             "ZUONR": document_type_mappings[
-#                 "assignment"
-#             ],
-
-#             "RSTGR": get_reason_code(
-#                 source_row.get("Reason code")
-#             ),
-#         }
-
-#         for technical_field, value in mapped_values.items():
-#             if technical_field in technical_columns:
-#                 ws.cell(
-#                     row=current_row,
-#                     column=technical_columns[technical_field],
-#                     value=value,
-#                 )
-
-#         current_row += 1
-
-#     output = io.BytesIO()
-#     wb.save(output)
-#     output.seek(0)
-
-#     return output
-
 # ar_processor.py
 
 import io
 import datetime
+import copy
 
 import pandas as pd
 import openpyxl
+from reference_mappings import load_but_mapping, map_business_partner
+# from reference_mappings import (
+#     load_but_mapping,
+#     map_business_partner,
+#     get_s4_payment_terms,
+# )
+from openpyxl.utils import get_column_letter
 
 # ... (existing constants and helper functions remain unchanged) ...
 
@@ -389,6 +32,71 @@ REASON_CODE_MAPPING = {
     "UPC": "011",
 }
 
+PAYMENT_TERMS_MAPPING = {
+    "O": "NT30",
+    "A": "NT00",
+    "B": "NT10",
+    "H": "NT15",
+    "T": "NT60",
+    "C": "Z130",
+    "L": "NT20",
+    "YY": "NT90",
+    "R": "NT45",
+    "S": "NT50",
+    "NF5": "Z514",
+    "D": "Z221",
+    "ZZ": "N100",
+    "I": "Z229",
+    "N120": "N120",
+    "M": "Z120",
+    "EE": "Z167",
+    "BB": "Z103",
+    "G": "Z162",
+    "NF7": "NT07",
+    "HI": "Z101",
+    "U": "Z053",
+    "N110": "N110",
+    "TT": "NT75",
+    "Y": "NT55",
+    "V": "Z233",
+    "Q": "NT40",
+    "X": "Z247",
+    "WX": "Z163",
+    "N115": "N115",
+    "Z": "Z132",
+    "J": "P215",
+    "E10": "P210",
+    "E": "P010",
+    "FF": "Z145",
+    "N125": "N125",
+    "N65": "NT65",
+    "T70": "NT70",
+    "NF4": "Z333",
+    "N135": "N135",
+    "AA": "Z261",
+    "CC": "Z147",
+    "W": "Z263",
+    "DD": "Z100",
+    "F": "P231",
+    "XX": "Z190",
+    "N": "Z223",
+    "OO": "NT38",
+}
+
+def get_s4_payment_terms(ecc_payment_term):
+    """
+    Look up S/4 Payment Terms from ECC Payment Terms.
+    """
+
+    if not ecc_payment_term or pd.isna(ecc_payment_term):
+        return ""
+
+    payment_term = str(ecc_payment_term).strip().upper()
+
+    return PAYMENT_TERMS_MAPPING.get(
+        payment_term,
+        payment_term
+    )
 
 def clean_string(value):
     if value is None or pd.isna(value):
@@ -494,10 +202,15 @@ def get_document_type_mappings(
     text = clean_string(text)
     reference = get_reference_value(reference)
 
+    # if document_type == "RV":
+    #     return {
+    #         "reference_document_number": assignment,
+    #         "assignment": "",
+    #     }
     if document_type == "RV":
         return {
             "reference_document_number": assignment,
-            "assignment": "",
+            "assignment": reference,
         }
 
     if document_type == "DZ":
@@ -543,9 +256,50 @@ REQUIRED_AR_COLUMNS = [
     "Amount",
 ]
 
+
+def copy_sheet_headers_and_formatting(source_ws, target_wb, target_sheet_name):
+    """
+    Copies the header rows (rows 1-8) and column formats from source_ws to a new sheet.
+    """
+    # Create a new sheet in the target workbook
+    if target_sheet_name in target_wb.sheetnames:
+        # If sheet already exists, remove it first
+        std = target_wb[target_sheet_name]
+        target_wb.remove(std)
+    
+    target_ws = target_wb.create_sheet(target_sheet_name)
+    
+    # Copy rows 1-8 (headers, technical info, formatting)
+    for row in range(1, 9):  # rows 1-8
+        for col in range(1, source_ws.max_column + 1):
+            source_cell = source_ws.cell(row=row, column=col)
+            target_cell = target_ws.cell(row=row, column=col)
+            
+            # Copy value
+            target_cell.value = source_cell.value
+            
+            # Copy formatting (font, fill, border, etc.)
+            if source_cell.has_style:
+                target_cell.font = copy.copy(source_cell.font)
+                target_cell.border = copy.copy(source_cell.border)
+                target_cell.fill = copy.copy(source_cell.fill)
+                target_cell.number_format = source_cell.number_format
+                target_cell.protection = copy.copy(source_cell.protection)
+                target_cell.alignment = copy.copy(source_cell.alignment)
+    
+    # Copy column widths
+    for col in range(1, source_ws.max_column + 1):
+        col_letter = get_column_letter(col)
+        if source_ws.column_dimensions[col_letter].width:
+            target_ws.column_dimensions[col_letter].width = source_ws.column_dimensions[col_letter].width
+    
+    return target_ws
+
+
 def process_ar_registry(
     registry_file,
     template_path="templates/Merged File all DOC Types.xlsx",
+    but_path="reference_data/but0id_qs4_500.xlsx",
 ):
     """
     Processes the ECC Accounts Receivable registry and populates
@@ -567,6 +321,15 @@ def process_ar_registry(
             f"column(s): {', '.join(missing_columns)}."
         )
 
+    # ---------------------------------------------------------
+    # Customer -> Business Partner mapping
+    # ---------------------------------------------------------
+
+    customer_but_mapping = load_but_mapping(
+        but_path,
+        id_type="DAP"
+    )
+
     wb = openpyxl.load_workbook(template_path)
 
     # Prefer a customer open-item sheet if the template contains one.
@@ -582,6 +345,14 @@ def process_ar_registry(
         if value:
             technical_columns[value] = col
 
+    # ---------------------------------------------------------
+    # Reason Code
+    # Fixed target column in the AR template
+    # BL = Column 64
+    # ---------------------------------------------------------
+
+    reason_code_column = 64
+
     # Fallback: some templates have technical headers in Row 1.
     if not technical_columns:
         for col in range(1, ws.max_column + 1):
@@ -596,7 +367,16 @@ def process_ar_registry(
         for col in range(1, ws.max_column + 1):
             ws.cell(row=row, column=col).value = None
 
+    # Create a new sheet for Canada data, copying the header and formatting
+    canada_ws = copy_sheet_headers_and_formatting(ws, wb, "Canada Open Items")
+    
+    # Clear any existing data rows in the Canada sheet
+    for row in range(data_start_row, canada_ws.max_row + 1):
+        for col in range(1, canada_ws.max_column + 1):
+            canada_ws.cell(row=row, column=col).value = None
+
     current_row = data_start_row
+    canada_current_row = data_start_row
     validation_errors = []   # list of dicts: sheet, row, field_label
 
     for idx, source_row in df.iterrows():
@@ -626,10 +406,16 @@ def process_ar_registry(
         else:
             tax_code = ""
 
+        # Get the document number (XBLNR from source) to map to XREF1
+        document_number = clean_string(source_row.get("Document Number"))
+
         mapped_values = {
             "BUKRS": s4_company_code,
             "XBLNR": doc_type_mappings["reference_document_number"],
-            "KUNNR": clean_string(source_row.get("Customer")),
+            "KUNNR": map_business_partner(
+                    customer_but_mapping,
+                    source_row.get("Customer")
+                ),
             "GKONT": "9999900000",          # hardcoded clearing account
             "BLART": "UE",                  # target document type fixed
             "BLDAT": clean_date(source_row.get("Document Date")),
@@ -637,7 +423,9 @@ def process_ar_registry(
             "WAERS": clean_string(source_row.get("Currency")),
             "WRBTR": amount,
             "MWSKZ": tax_code,
-            "ZTERM": clean_string(source_row.get("Terms of Payment")),
+            "ZTERM": get_s4_payment_terms(
+                    source_row.get("Terms of Payment")
+                ),
             "ZFBDT": clean_date(source_row.get("Baseline Payment Dte")),
             "ZBD1T": clean_string(source_row.get("Days 1")),
             "ZBD1P": clean_float(source_row.get("Disc.percent 1")),
@@ -648,9 +436,11 @@ def process_ar_registry(
             "KKBER": clean_string(source_row.get("Credit Control Area")),
             "ZUONR": doc_type_mappings["assignment"],
             "RSTGR": get_reason_code(source_row.get("Reason code")),
+            # Map the document number from the source to XREF1 (Reference Key 1)
+            "XREF1": document_number,
         }
 
-        # Write values to the template
+        # Write values to the main Customer Open Items sheet (all data)
         for tech_field, value in mapped_values.items():
             if tech_field in technical_columns:
                 ws.cell(
@@ -659,13 +449,43 @@ def process_ar_registry(
                     value=value,
                 )
 
-        # --- Validation: check mandatory fields ---
+        # ---------------------------------------------------------
+        # Reason Code
+        # Source: Reason code
+        # Target: BL (Column 64)
+        # ---------------------------------------------------------
+
+        reason_code = get_reason_code(
+            source_row.get("Reason code")
+        )
+
+        ws.cell(
+            row=current_row,
+            column=reason_code_column,
+            value=reason_code,
+        )
+
+        # ---------------------------------------------------------
+        # Reason Code
+        # Source: Reason code
+        # Target: BL (Column 64)
+        # ---------------------------------------------------------
+
+        reason_code = get_reason_code(
+            source_row.get("Reason code")
+        )
+
+        ws.cell(
+            row=current_row,
+            column=reason_code_column,
+            value=reason_code,
+        )
+
+        # --- Validation: check mandatory fields for main sheet ---
         sheet_name = ws.title
         row_number = current_row
         for field in MANDATORY_FIELDS:
-            # The field may not exist in technical_columns; if not, treat as missing.
             if field not in technical_columns:
-                # The field is missing in the template structure – log an error.
                 validation_errors.append({
                     "sheet": sheet_name,
                     "row": row_number,
@@ -677,7 +497,6 @@ def process_ar_registry(
                     row=current_row,
                     column=technical_columns[field]
                 ).value
-                # Check if value is empty or None
                 if cell_value is None or (isinstance(cell_value, str) and cell_value.strip() == ""):
                     validation_errors.append({
                         "sheet": sheet_name,
@@ -685,6 +504,42 @@ def process_ar_registry(
                         "field_label": field,
                         "value": cell_value,
                     })
+
+        # --- Write to Canada Open Items sheet if company code is CA01 ---
+        if ecc_company_code.upper() == "CA01":
+            for tech_field, value in mapped_values.items():
+                if tech_field in technical_columns:
+                    canada_ws.cell(
+                        row=canada_current_row,
+                        column=technical_columns[tech_field],
+                        value=value,
+                    )
+            
+            # --- Validation for Canada sheet ---
+            canada_sheet_name = canada_ws.title
+            canada_row_number = canada_current_row
+            for field in MANDATORY_FIELDS:
+                if field not in technical_columns:
+                    validation_errors.append({
+                        "sheet": canada_sheet_name,
+                        "row": canada_row_number,
+                        "field_label": field,
+                        "value": None,
+                    })
+                else:
+                    cell_value = canada_ws.cell(
+                        row=canada_current_row,
+                        column=technical_columns[field]
+                    ).value
+                    if cell_value is None or (isinstance(cell_value, str) and cell_value.strip() == ""):
+                        validation_errors.append({
+                            "sheet": canada_sheet_name,
+                            "row": canada_row_number,
+                            "field_label": field,
+                            "value": cell_value,
+                        })
+            
+            canada_current_row += 1
 
         current_row += 1
 
