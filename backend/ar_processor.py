@@ -2,17 +2,10 @@
 
 import io
 import datetime
-import copy
 
 import pandas as pd
 import openpyxl
 from reference_mappings import load_but_mapping, map_business_partner
-# from reference_mappings import (
-#     load_but_mapping,
-#     map_business_partner,
-#     get_s4_payment_terms,
-# )
-from openpyxl.utils import get_column_letter
 
 # ... (existing constants and helper functions remain unchanged) ...
 
@@ -33,70 +26,110 @@ REASON_CODE_MAPPING = {
 }
 
 PAYMENT_TERMS_MAPPING = {
-    "O": "NT30",
-    "A": "NT00",
-    "B": "NT10",
-    "H": "NT15",
-    "T": "NT60",
-    "C": "Z130",
-    "L": "NT20",
-    "YY": "NT90",
-    "R": "NT45",
-    "S": "NT50",
-    "NF5": "Z514",
-    "D": "Z221",
-    "ZZ": "N100",
-    "I": "Z229",
-    "N120": "N120",
-    "M": "Z120",
-    "EE": "Z167",
-    "BB": "Z103",
-    "G": "Z162",
-    "NF7": "NT07",
-    "HI": "Z101",
-    "U": "Z053",
-    "N110": "N110",
-    "TT": "NT75",
-    "Y": "NT55",
-    "V": "Z233",
-    "Q": "NT40",
-    "X": "Z247",
-    "WX": "Z163",
-    "N115": "N115",
-    "Z": "Z132",
-    "J": "P215",
-    "E10": "P210",
-    "E": "P010",
-    "FF": "Z145",
-    "N125": "N125",
-    "N65": "NT65",
-    "T70": "NT70",
-    "NF4": "Z333",
-    "N135": "N135",
-    "AA": "Z261",
-    "CC": "Z147",
-    "W": "Z263",
-    "DD": "Z100",
-    "F": "P231",
-    "XX": "Z190",
-    "N": "Z223",
-    "OO": "NT38",
+    "001": "P210",
+    "003": "Z200",
+    "004": "P215",
+    "014": "P220",
+    "015": "Z251",
+    "016": "Z291",
+    "017": "Z261",
+    "018": "Z245",
+    "019": "Z230",
+    "020": "Z231",
+    "021": "Z232",
+    "022": "Z246",
+    "023": "Z233",
+    "024": "Z260",
+    "025": "Z305",
+    "026": "NT12",
+    "027": "Z160",
+    "029": "Z262",
+    "030": "Z276",
+    "035": "Z290",
+    "036": "Z130",
+    "038": "P030",
+    "039": "P230",
+    "040": "NT30",
+    "041": "NT60",
+    "042": "NT90",
+    "043": "NT45",
+    "044": "NT75",
+    "045": "NT15",
+    "046": "P025",
+    "048": "NT60",
+    "050": "Z400",
+    "052": "Z132",
+    "056": "Z216",
+    "058": "Z265",
+    "059": "Z263",
+    "060": "Z262",
+    "061": "Z264",
+    "062": "Z247",
+    "063": "Z161",
+    "064": "Z330",
+    "065": "Z146",
+    "070": "P260",
+    "072": "P225",
+    "073": "Z163",
+    "075": "Z505",
+    "091": "NTLC",
+    "094": "Z346",
+    "097": "Z164",
+    "100": "Z167",
+    "107": "Z316",
+    "109": "Z225",
+    "111": "Z234",
+    "112": "Z235",
+    "114": "P190",
+    "115": "P160",
+    "117": "P101",
+    "118": "Z162",
+    "119": "Z212",
+    "122": "Z131",
+    "129": "NT10",
+    "138": "Z165",
+    "139": "Z176",
+    "141": "E225",
+    "400": "Z166",
+    "401": "NT60",
+    "402": "NT10",
+    "403": "NT00",
+    "441": "NT65",
+    "442": "NT90",
+    "443": "NT45",
+    "444": "NT30",
+    "445": "NT75",
+    "33": "Z131",
 }
 
 def get_s4_payment_terms(ecc_payment_term):
     """
     Look up S/4 Payment Terms from ECC Payment Terms.
+
+    Leading zeroes are ignored, so values such as 033 and 33
+    are treated as the same ECC payment-term code.
     """
 
-    if not ecc_payment_term or pd.isna(ecc_payment_term):
-        return ""
+    # if ecc_payment_term is None or pd.isna(ecc_payment_term):
+    #     return ""
+    if ecc_payment_term is None or pd.isna(ecc_payment_term):
+        return "No payment terms in ECC"
 
     payment_term = str(ecc_payment_term).strip().upper()
 
-    return PAYMENT_TERMS_MAPPING.get(
-        payment_term,
-        payment_term
-    )
+    # Excel/Pandas may read numeric codes as 33.0.
+    if payment_term.endswith(".0") and payment_term[:-2].isdigit():
+        payment_term = payment_term[:-2]
+
+    normalized_term = payment_term.lstrip("0") or "0"
+
+    for ecc_code, s4_term in PAYMENT_TERMS_MAPPING.items():
+        normalized_code = ecc_code.lstrip("0") or "0"
+        if normalized_code == normalized_term:
+            return s4_term
+
+    return payment_term
+
 
 def clean_string(value):
     if value is None or pd.isna(value):
@@ -196,31 +229,42 @@ def get_document_type_mappings(
     assignment,
     text,
     reference,
+    document_number,
 ):
     document_type = clean_string(document_type).upper()
     assignment = clean_string(assignment)
     text = clean_string(text)
     reference = get_reference_value(reference)
+    document_number = clean_string(document_number)
 
+    # RV:
+    # Assignment -> Reference Document Number
+    # Reference  -> Assignment Number
     # if document_type == "RV":
     #     return {
     #         "reference_document_number": assignment,
-    #         "assignment": "",
+    #         "assignment": reference,
     #     }
     if document_type == "RV":
         return {
-            "reference_document_number": assignment,
+            "reference_document_number": assignment if assignment else "No reference in ECC",
             "assignment": reference,
         }
 
+    # DZ:
+    # Reference -> Reference Document Number
+    # Text      -> Assignment Number
     if document_type == "DZ":
         return {
             "reference_document_number": reference,
             "assignment": text,
         }
 
+    # All other document types:
+    # Document Number -> Reference Document Number
+    # Assignment      -> Assignment Number
     return {
-        "reference_document_number": assignment,
+        "reference_document_number": document_number,
         "assignment": assignment,
     }
 
@@ -240,8 +284,6 @@ MANDATORY_FIELDS = [
     "XBLNR",   # Reference Document Number
 ]
 
-class RegistryMismatchError(ValueError):
-    pass
 
 REQUIRED_AR_COLUMNS = [
     "Company Code",
@@ -257,43 +299,6 @@ REQUIRED_AR_COLUMNS = [
 ]
 
 
-def copy_sheet_headers_and_formatting(source_ws, target_wb, target_sheet_name):
-    """
-    Copies the header rows (rows 1-8) and column formats from source_ws to a new sheet.
-    """
-    # Create a new sheet in the target workbook
-    if target_sheet_name in target_wb.sheetnames:
-        # If sheet already exists, remove it first
-        std = target_wb[target_sheet_name]
-        target_wb.remove(std)
-    
-    target_ws = target_wb.create_sheet(target_sheet_name)
-    
-    # Copy rows 1-8 (headers, technical info, formatting)
-    for row in range(1, 9):  # rows 1-8
-        for col in range(1, source_ws.max_column + 1):
-            source_cell = source_ws.cell(row=row, column=col)
-            target_cell = target_ws.cell(row=row, column=col)
-            
-            # Copy value
-            target_cell.value = source_cell.value
-            
-            # Copy formatting (font, fill, border, etc.)
-            if source_cell.has_style:
-                target_cell.font = copy.copy(source_cell.font)
-                target_cell.border = copy.copy(source_cell.border)
-                target_cell.fill = copy.copy(source_cell.fill)
-                target_cell.number_format = source_cell.number_format
-                target_cell.protection = copy.copy(source_cell.protection)
-                target_cell.alignment = copy.copy(source_cell.alignment)
-    
-    # Copy column widths
-    for col in range(1, source_ws.max_column + 1):
-        col_letter = get_column_letter(col)
-        if source_ws.column_dimensions[col_letter].width:
-            target_ws.column_dimensions[col_letter].width = source_ws.column_dimensions[col_letter].width
-    
-    return target_ws
 
 
 def process_ar_registry(
@@ -367,16 +372,15 @@ def process_ar_registry(
         for col in range(1, ws.max_column + 1):
             ws.cell(row=row, column=col).value = None
 
-    # Create a new sheet for Canada data, copying the header and formatting
-    canada_ws = copy_sheet_headers_and_formatting(ws, wb, "Canada Open Items")
+    # # Create a new sheet for Canada data, copying the header and formatting
+    # canada_ws = copy_sheet_headers_and_formatting(ws, wb, "Canada Open Items")
     
-    # Clear any existing data rows in the Canada sheet
-    for row in range(data_start_row, canada_ws.max_row + 1):
-        for col in range(1, canada_ws.max_column + 1):
-            canada_ws.cell(row=row, column=col).value = None
+    # # Clear any existing data rows in the Canada sheet
+    # for row in range(data_start_row, canada_ws.max_row + 1):
+    #     for col in range(1, canada_ws.max_column + 1):
+    #         canada_ws.cell(row=row, column=col).value = None
 
     current_row = data_start_row
-    canada_current_row = data_start_row
     validation_errors = []   # list of dicts: sheet, row, field_label
 
     for idx, source_row in df.iterrows():
@@ -392,6 +396,7 @@ def process_ar_registry(
             assignment=source_row.get("Assignment"),
             text=source_row.get("Text"),
             reference=source_row.get("Reference"),
+            document_number=source_row.get("Document Number"),
         )
 
         amount = normalize_amount(
@@ -402,11 +407,11 @@ def process_ar_registry(
         if s4_company_code in ("1000", "1001"):
             tax_code = "I0"
         elif s4_company_code == "1200":
-            tax_code = "C0"
+            tax_code = "Z0"
         else:
             tax_code = ""
 
-        # Get the document number (XBLNR from source) to map to XREF1
+        # Get the document number from the registry (Column I) to map to XREF1
         document_number = clean_string(source_row.get("Document Number"))
 
         mapped_values = {
@@ -432,8 +437,13 @@ def process_ar_registry(
             "ZBD2T": clean_string(source_row.get("Days 2")),
             "ZBD2P": clean_float(source_row.get("Disc.percent 2")),
             "ZBD3T": clean_string(source_row.get("Days Net")),
-            "SKFBT": clean_float(source_row.get("Discount base")),
-            "KKBER": clean_string(source_row.get("Credit Control Area")),
+            # "SKFBT": clean_float(source_row.get("Discount base")),
+            "SKFBT": normalize_amount(
+                        source_row.get("Discount base"),
+                        source_row.get("Debit/Credit Ind.")
+                    ),
+            # "KKBER": clean_string(source_row.get("Credit Control Area")),
+            "KKBER": s4_company_code,
             "ZUONR": doc_type_mappings["assignment"],
             "RSTGR": get_reason_code(source_row.get("Reason code")),
             # Map the document number from the source to XREF1 (Reference Key 1)
@@ -448,22 +458,6 @@ def process_ar_registry(
                     column=technical_columns[tech_field],
                     value=value,
                 )
-
-        # ---------------------------------------------------------
-        # Reason Code
-        # Source: Reason code
-        # Target: BL (Column 64)
-        # ---------------------------------------------------------
-
-        reason_code = get_reason_code(
-            source_row.get("Reason code")
-        )
-
-        ws.cell(
-            row=current_row,
-            column=reason_code_column,
-            value=reason_code,
-        )
 
         # ---------------------------------------------------------
         # Reason Code
@@ -504,42 +498,6 @@ def process_ar_registry(
                         "field_label": field,
                         "value": cell_value,
                     })
-
-        # --- Write to Canada Open Items sheet if company code is CA01 ---
-        if ecc_company_code.upper() == "CA01":
-            for tech_field, value in mapped_values.items():
-                if tech_field in technical_columns:
-                    canada_ws.cell(
-                        row=canada_current_row,
-                        column=technical_columns[tech_field],
-                        value=value,
-                    )
-            
-            # --- Validation for Canada sheet ---
-            canada_sheet_name = canada_ws.title
-            canada_row_number = canada_current_row
-            for field in MANDATORY_FIELDS:
-                if field not in technical_columns:
-                    validation_errors.append({
-                        "sheet": canada_sheet_name,
-                        "row": canada_row_number,
-                        "field_label": field,
-                        "value": None,
-                    })
-                else:
-                    cell_value = canada_ws.cell(
-                        row=canada_current_row,
-                        column=technical_columns[field]
-                    ).value
-                    if cell_value is None or (isinstance(cell_value, str) and cell_value.strip() == ""):
-                        validation_errors.append({
-                            "sheet": canada_sheet_name,
-                            "row": canada_row_number,
-                            "field_label": field,
-                            "value": cell_value,
-                        })
-            
-            canada_current_row += 1
 
         current_row += 1
 

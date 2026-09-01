@@ -906,9 +906,13 @@ def process_ap_registry(
                 row_data.get("Days Net")
             ),
 
-            # Discount Base
-            "SKFBT": clean_float(
-                row_data.get("Discount base")
+            #Discount Base
+            # "SKFBT": clean_float(
+            #     row_data.get("Discount base")
+            # ),
+            "SKFBT": apply_debit_credit_sign(
+                clean_float(row_data.get("Discount base")),
+                shkzg
             ),
 
             # Instruction 1
