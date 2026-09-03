@@ -1,5 +1,5 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 import json
 import io
@@ -8,10 +8,14 @@ from credit_processor import process_credit_registry, RegistryMismatchError as C
 from ap_processor import process_ap_registry, RegistryMismatchError as APMismatchError
 from ar_processor import process_ar_registry, RegistryMismatchError as ARMismatchError
 from ar_validator import validate_ar_files
+from report_generator import generate_ar_validation_report
 import mappings
 import os
  
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+REPORTS_DIR = os.path.join(BASE_DIR, "reports")
+os.makedirs(REPORTS_DIR, exist_ok=True)
  
 TEMPLATE_PATH = os.path.join(
     BASE_DIR,
@@ -205,65 +209,6 @@ async def process_asset(
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Error processing asset registry: {str(e)}")
-
-
-# @app.post("/validate-asset")
-# async def validate_asset(
-#     file: UploadFile = File(...),
-#     mappings_json: str = Form(None)
-# ):
-#     """
-#     POST endpoint that runs the exact same mapping logic as /process-asset
-#     but returns a JSON validation report instead of the file itself: one
-#     entry per (sheet, mandatory column) that has at least one missing row,
-#     with a ready-to-display message so the frontend doesn't have to build
-#     its own copy.
-#     """
-#     if not file.filename.endswith(('.xlsx', '.xls')):
-#         raise HTTPException(status_code=400, detail="Only Excel files (.xlsx, .xls) are accepted.")
-
-#     custom_maps = parse_custom_mappings(mappings_json)
-
-#     try:
-#         file_bytes = await file.read()
-#         reg_io = io.BytesIO(file_bytes)
-
-#         _out_buf, validation_errors = process_asset_registry(
-#             reg_io,
-#             template_path=TEMPLATE_PATH,
-#             custom_mappings=custom_maps
-#         )
-
-#         # Collapse row-level errors down to one count per (sheet, column) —
-#         # that's all the frontend needs to show per your spec.
-#         counts = {}
-#         for err in validation_errors:
-#             key = (err['sheet'], err['field_label'])
-#             counts[key] = counts.get(key, 0) + 1
-
-#         errors = [
-#             {
-#                 "sheet": sheet,
-#                 "column": column,
-#                 "missing_rows": count,
-#                 "message": (
-#                     f"Mandatory column {column} of sheet {sheet} has "
-#                     f"{count} missing row{'s' if count != 1 else ''}."
-#                 ),
-#             }
-#             for (sheet, column), count in counts.items()
-#         ]
-
-#         return {
-#             "valid": len(errors) == 0,
-#             "errors": errors,
-#         }
-#     except AssetMismatchError as e:
-#         raise HTTPException(status_code=400, detail=str(e))
-#     except Exception as e:
-#         import traceback
-#         traceback.print_exc()
-#         raise HTTPException(status_code=500, detail=f"Error validating asset registry: {str(e)}")
 
 @app.post("/validate-asset")
 async def validate_asset(
@@ -587,6 +532,7 @@ async def process_ar(
         )
 
 
+#### Validation endpoints:
 
 @app.post("/validate-ar")
 async def validate_ar(
@@ -629,10 +575,31 @@ async def validate_ar(
         # Run AR validations
         # ----------------------------------------------------
 
+        # result = validate_ar_files(
+        #     registry_file=registry_io,
+        #     filled_file=filled_io,
+        # )
+
+        # return result
         result = validate_ar_files(
             registry_file=registry_io,
             filled_file=filled_io,
         )
+
+        report_path = os.path.join(
+            REPORTS_DIR,
+            "AR_Validation_Report.pdf"
+        )
+
+        generate_ar_validation_report(
+            validation_payload=result,
+            output_path=report_path,
+            source_file_name=registry_file.filename,
+            target_file_name=filled_file.filename,
+        )
+
+        result["report_available"] = True
+        result["report_file"] = "AR_Validation_Report.pdf"
 
         return result
 
@@ -650,6 +617,26 @@ async def validate_ar(
             status_code=500,
             detail=f"Error validating AR files: {str(e)}"
         )
+
+
+@app.get("/download-ar-report")
+async def download_ar_report():
+    report_path = os.path.join(
+        REPORTS_DIR,
+        "AR_Validation_Report.pdf"
+    )
+
+    if not os.path.exists(report_path):
+        raise HTTPException(
+            status_code=404,
+            detail="AR validation report has not been generated yet."
+        )
+
+    return FileResponse(
+        path=report_path,
+        media_type="application/pdf",
+        filename="AR_Validation_Report.pdf",
+    )
 
 if __name__ == "__main__":
     import uvicorn
