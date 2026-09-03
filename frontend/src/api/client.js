@@ -142,13 +142,6 @@ export const processArFile = (file) => {
   return postForFile('/process-ar', file, {}, 'ar_data_load_filled.xlsx');
 };
 
-// Detailed mandatory-field validation for AR — POST /validate-ar
-// Note: the backend only detects gaps when the AR template uses the
-// standard Row 5 technical-header layout; if it falls back to Row 1
-// headers, this will correctly report valid:true for a template it
-// isn't actually able to check yet (see ar_processor.py).
-export const validateArFile = (file) => postForJson('/validate-ar', file);
-
 // Detailed mandatory-field validation reports — same underlying mapping
 // logic as the matching /process-* route, but returns the report instead
 // of the file. Only worth calling when processFile's validationErrorCount
@@ -161,5 +154,29 @@ export const validateAssetFile = (file, mappingOverrides = null) => {
 export const validateCreditFile = (file) => postForJson('/validate-credit', file);
 
 export const validateApFile = (file) => postForJson('/validate-ap', file);
+
+// Data Validation tab — compares an original ECC AR registry against the
+// already-migrated S/4 output file. POST /validate-ar was repurposed for
+// this (previously it checked a single freshly-processed AR file for
+// missing mandatory fields — that contract no longer exists; there is
+// currently no AR mandatory-field check available from processing).
+// Returns { process, overall_status, summary: {total_checks, passed,
+// failed}, checks: [{check_name, status, message, ...}] }.
+export const validateArMigration = async (eccRegistryFile, s4FilledFile) => {
+  const formData = new FormData();
+  formData.append('registry_file', eccRegistryFile);
+  formData.append('filled_file', s4FilledFile);
+
+  try {
+    const response = await apiClient.post('/validate-ar', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+  } catch (error) {
+    const detail = error.response?.data?.detail;
+    console.error('/validate-ar (migration comparison) failed:', detail || error);
+    throw new Error(detail || 'AR validation failed.');
+  }
+};
 
 export default apiClient;

@@ -15,7 +15,7 @@ const isAcceptedFile = (filename) =>
  * that all lives in App.jsx via api/client.js, so there's exactly one place
  * that talks to the backend.
  */
-const FileUpload = ({ onFileUpload, file, disabled }) => {
+const FileUpload = ({ onFileUpload, file, disabled, title = 'Upload Registry File', dropText = 'your registry file' }) => {
   const inputRef = useRef(null);
   const [isDragActive, setIsDragActive] = useState(false);
   const [rejection, setRejection] = useState(null);
@@ -46,7 +46,7 @@ const FileUpload = ({ onFileUpload, file, disabled }) => {
   return (
     <div className="card">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold text-gray-700">Upload Registry File</h3>
+        <h3 className="text-lg font-semibold text-gray-700">{title}</h3>
         {file && (
           <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full">
             File loaded
@@ -109,7 +109,7 @@ const FileUpload = ({ onFileUpload, file, disabled }) => {
               </div>
             </div>
             <p className="text-sm text-gray-600">
-              {isDragActive ? 'Drop your file here...' : 'Drag & drop your registry file, or click to browse'}
+              {isDragActive ? 'Drop your file here...' : `Drag & drop ${dropText}, or click to browse`}
             </p>
             <p className="text-xs text-gray-400 mt-2">Supports .xlsx and .xls files</p>
           </div>
