@@ -335,10 +335,175 @@ def validate_company_code_counts(ecc_df, s4_df):
         ),
     }
 
+# ============================================================
+# Validation 3
+# Sign Validation
+# ============================================================
+
+def validate_sign(ecc_df, s4_df):
+    """
+    Validate the sign of amounts between ECC and S/4.
+
+    ECC:
+        Debit/Credit Ind. = S -> amount is positive
+        Debit/Credit Ind. = H -> amount is negative
+
+    S/4:
+        Positive WRBTR values must match ECC S total.
+        Negative WRBTR values must match ECC H total
+        in absolute value.
+    """
+
+    # --------------------------------------------------------
+    # ECC amounts
+    # --------------------------------------------------------
+
+    ecc_amounts = pd.to_numeric(
+        ecc_df["Amount"],
+        errors="coerce"
+    ).fillna(0)
+
+    ecc_indicator = (
+        ecc_df["Debit/Credit Ind."]
+        .apply(clean_string)
+        .str.upper()
+    )
+
+    # S = positive
+    ecc_s_total = ecc_amounts[ecc_indicator == "S"].abs().sum()
+
+    # H = negative
+    ecc_h_total = ecc_amounts[ecc_indicator == "H"].abs().sum()
+
+    # --------------------------------------------------------
+    # S/4 WRBTR amounts
+    # --------------------------------------------------------
+
+    s4_amounts = pd.to_numeric(
+        s4_df["WRBTR"],
+        errors="coerce"
+    ).fillna(0)
+
+    # Positive S/4 amounts
+    s4_positive_total = s4_amounts[s4_amounts > 0].sum()
+
+    # Negative S/4 amounts
+    s4_negative_total = s4_amounts[s4_amounts < 0].abs().sum()
+
+    # --------------------------------------------------------
+    # Compare
+    # --------------------------------------------------------
+
+    s_match = abs(ecc_s_total - s4_positive_total) < 0.01
+    h_match = abs(ecc_h_total - s4_negative_total) < 0.01
+
+    status = "PASS" if s_match and h_match else "FAIL"
+
+    if status == "PASS":
+        message = (
+            "ECC S/H amount totals match the corresponding "
+            "positive/negative S/4 WRBTR totals."
+        )
+    else:
+        message = (
+            "Sign validation failed. One or both ECC S/H totals "
+            "do not match the corresponding S/4 positive/negative totals."
+        )
+
+    return {
+        "check_name": "Amount Sign Validation",
+        "status": status,
+        "ecc_s_total": float(ecc_s_total),
+        "s4_positive_total": float(s4_positive_total),
+        "s_difference": float(
+            ecc_s_total - s4_positive_total
+        ),
+        "ecc_h_total": float(ecc_h_total),
+        "s4_negative_total": float(
+            -s4_negative_total
+        ),
+        "h_difference": float(
+            -ecc_h_total + s4_negative_total
+        ),
+        "s_status": "PASS" if s_match else "FAIL",
+        "h_status": "PASS" if h_match else "FAIL",
+        "message": message,
+    }
+
+# ============================================================
+# Validation 4
+# Payment Terms Blank Count
+# ============================================================
+
+def validate_payment_terms_blank_count(ecc_df, s4_df):
+    """
+    Validate that the number of blank Terms of Payment values
+    in the ECC registry matches the number of
+    'No payment terms in ECC' values in S/4 ZTERM.
+    """
+
+    # --------------------------------------------------------
+    # ECC: Count blank Terms of Payment
+    # --------------------------------------------------------
+
+    ecc_payment_terms = ecc_df["Terms of Payment"]
+
+    ecc_blank_count = int(
+        ecc_payment_terms.apply(
+            lambda value: not is_non_empty(value)
+        ).sum()
+    )
+
+    # --------------------------------------------------------
+    # S/4: Count 'No payment terms in ECC' in ZTERM
+    # --------------------------------------------------------
+
+    s4_payment_terms = s4_df["ZTERM"]
+
+    s4_no_payment_terms_count = int(
+        s4_payment_terms.apply(
+            lambda value: clean_string(value) == "No payment terms in ECC"
+        ).sum()
+    )
+
+    # --------------------------------------------------------
+    # Compare
+    # --------------------------------------------------------
+
+    difference = ecc_blank_count - s4_no_payment_terms_count
+
+    status = "PASS" if difference == 0 else "FAIL"
+
+    if status == "PASS":
+        message = (
+            "Payment terms blank count matches. "
+            f"ECC contains {ecc_blank_count} blank Terms of Payment values "
+            f"and S/4 contains {s4_no_payment_terms_count} "
+            "'No payment terms in ECC' values in ZTERM."
+        )
+    else:
+        message = (
+            "Payment terms blank count mismatch. "
+            f"ECC contains {ecc_blank_count} blank Terms of Payment values "
+            f"while S/4 contains {s4_no_payment_terms_count} "
+            "'No payment terms in ECC' values in ZTERM."
+        )
+
+    return {
+        "check_name": "Payment Terms Blank Count",
+        "status": status,
+        "ecc_blank_count": ecc_blank_count,
+        "s4_no_payment_terms_count": s4_no_payment_terms_count,
+        "difference": difference,
+        "message": message,
+    }
+
 
 # ============================================================
 # Overall Validation
 # ============================================================
+
+
 
 def calculate_overall_status(checks):
     """
@@ -389,6 +554,28 @@ def validate_ar_files(registry_file, filled_file):
 
     checks.append(
         validate_company_code_counts(
+            ecc_df,
+            s4_df,
+        )
+    )
+
+    # --------------------------------------------------------
+    # Check 3: Amount sign validation
+    # --------------------------------------------------------
+
+    checks.append(
+        validate_sign(
+            ecc_df,
+            s4_df,
+        )
+    )
+
+    # --------------------------------------------------------
+    # Check 4: Payment Terms Blank Count
+    # --------------------------------------------------------
+
+    checks.append(
+        validate_payment_terms_blank_count(
             ecc_df,
             s4_df,
         )
