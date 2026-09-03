@@ -7,6 +7,7 @@ from asset_processor import process_asset_registry, RegistryMismatchError as Ass
 from credit_processor import process_credit_registry, RegistryMismatchError as CreditMismatchError
 from ap_processor import process_ap_registry, RegistryMismatchError as APMismatchError
 from ar_processor import process_ar_registry, RegistryMismatchError as ARMismatchError
+from ar_validator import validate_ar_files
 import mappings
 import os
  
@@ -586,62 +587,127 @@ async def process_ar(
         )
 
 
-# NEW: validate-ar endpoint
+# # NEW: validate-ar endpoint
+# @app.post("/validate-ar")
+# async def validate_ar(
+#     file: UploadFile = File(...)
+# ):
+#     """
+#     POST endpoint that runs the same mapping logic as /process-ar
+#     but returns a JSON validation report instead of the file.
+#     """
+#     if not file.filename.endswith((".xlsx", ".xls")):
+#         raise HTTPException(
+#             status_code=400,
+#             detail="Only Excel files (.xlsx, .xls) are accepted."
+#         )
+
+#     try:
+#         file_bytes = await file.read()
+#         reg_io = io.BytesIO(file_bytes)
+
+#         _out_buf, validation_errors = process_ar_registry(
+#             reg_io,
+#             template_path=AR_TEMPLATE_PATH
+#         )
+
+#         # Collapse errors per sheet and field_label (like the other validators)
+#         counts = {}
+#         for err in validation_errors:
+#             key = (err['sheet'], err['field_label'])
+#             counts[key] = counts.get(key, 0) + 1
+
+#         errors = [
+#             {
+#                 "sheet": sheet,
+#                 "column": column,
+#                 "missing_rows": count,
+#                 "message": (
+#                     f"Mandatory column {column} of sheet {sheet} has "
+#                     f"{count} missing row{'s' if count != 1 else ''}."
+#                 ),
+#             }
+#             for (sheet, column), count in counts.items()
+#         ]
+
+#         return {
+#             "valid": len(errors) == 0,
+#             "errors": errors,
+#         }
+
+#     except ARMismatchError as e:
+#         raise HTTPException(status_code=400, detail=str(e))
+#     except Exception as e:
+#         import traceback
+#         traceback.print_exc()
+#         raise HTTPException(
+#             status_code=500,
+#             detail=f"Error validating AR registry: {str(e)}"
+#         )
+
+#### Validation endpoints:
+
 @app.post("/validate-ar")
 async def validate_ar(
-    file: UploadFile = File(...)
+    registry_file: UploadFile = File(...),
+    filled_file: UploadFile = File(...)
 ):
     """
-    POST endpoint that runs the same mapping logic as /process-ar
-    but returns a JSON validation report instead of the file.
+    Validate an ECC AR registry against the previously generated
+    S/4 Customer Open Items file.
     """
-    if not file.filename.endswith((".xlsx", ".xls")):
+
+    # --------------------------------------------------------
+    # Validate uploaded file types
+    # --------------------------------------------------------
+
+    if not registry_file.filename.endswith((".xlsx", ".xls")):
         raise HTTPException(
             status_code=400,
-            detail="Only Excel files (.xlsx, .xls) are accepted."
+            detail="ECC registry must be an Excel file (.xlsx or .xls)."
+        )
+
+    if not filled_file.filename.endswith((".xlsx", ".xls")):
+        raise HTTPException(
+            status_code=400,
+            detail="S/4 filled file must be an Excel file (.xlsx or .xls)."
         )
 
     try:
-        file_bytes = await file.read()
-        reg_io = io.BytesIO(file_bytes)
+        # ----------------------------------------------------
+        # Read both uploaded files into memory
+        # ----------------------------------------------------
 
-        _out_buf, validation_errors = process_ar_registry(
-            reg_io,
-            template_path=AR_TEMPLATE_PATH
+        registry_bytes = await registry_file.read()
+        filled_bytes = await filled_file.read()
+
+        registry_io = io.BytesIO(registry_bytes)
+        filled_io = io.BytesIO(filled_bytes)
+
+        # ----------------------------------------------------
+        # Run AR validations
+        # ----------------------------------------------------
+
+        result = validate_ar_files(
+            registry_file=registry_io,
+            filled_file=filled_io,
         )
 
-        # Collapse errors per sheet and field_label (like the other validators)
-        counts = {}
-        for err in validation_errors:
-            key = (err['sheet'], err['field_label'])
-            counts[key] = counts.get(key, 0) + 1
+        return result
 
-        errors = [
-            {
-                "sheet": sheet,
-                "column": column,
-                "missing_rows": count,
-                "message": (
-                    f"Mandatory column {column} of sheet {sheet} has "
-                    f"{count} missing row{'s' if count != 1 else ''}."
-                ),
-            }
-            for (sheet, column), count in counts.items()
-        ]
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=str(e)
+        )
 
-        return {
-            "valid": len(errors) == 0,
-            "errors": errors,
-        }
-
-    except ARMismatchError as e:
-        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         import traceback
         traceback.print_exc()
+
         raise HTTPException(
             status_code=500,
-            detail=f"Error validating AR registry: {str(e)}"
+            detail=f"Error validating AR files: {str(e)}"
         )
 
 if __name__ == "__main__":
