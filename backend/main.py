@@ -587,65 +587,6 @@ async def process_ar(
         )
 
 
-# # NEW: validate-ar endpoint
-# @app.post("/validate-ar")
-# async def validate_ar(
-#     file: UploadFile = File(...)
-# ):
-#     """
-#     POST endpoint that runs the same mapping logic as /process-ar
-#     but returns a JSON validation report instead of the file.
-#     """
-#     if not file.filename.endswith((".xlsx", ".xls")):
-#         raise HTTPException(
-#             status_code=400,
-#             detail="Only Excel files (.xlsx, .xls) are accepted."
-#         )
-
-#     try:
-#         file_bytes = await file.read()
-#         reg_io = io.BytesIO(file_bytes)
-
-#         _out_buf, validation_errors = process_ar_registry(
-#             reg_io,
-#             template_path=AR_TEMPLATE_PATH
-#         )
-
-#         # Collapse errors per sheet and field_label (like the other validators)
-#         counts = {}
-#         for err in validation_errors:
-#             key = (err['sheet'], err['field_label'])
-#             counts[key] = counts.get(key, 0) + 1
-
-#         errors = [
-#             {
-#                 "sheet": sheet,
-#                 "column": column,
-#                 "missing_rows": count,
-#                 "message": (
-#                     f"Mandatory column {column} of sheet {sheet} has "
-#                     f"{count} missing row{'s' if count != 1 else ''}."
-#                 ),
-#             }
-#             for (sheet, column), count in counts.items()
-#         ]
-
-#         return {
-#             "valid": len(errors) == 0,
-#             "errors": errors,
-#         }
-
-#     except ARMismatchError as e:
-#         raise HTTPException(status_code=400, detail=str(e))
-#     except Exception as e:
-#         import traceback
-#         traceback.print_exc()
-#         raise HTTPException(
-#             status_code=500,
-#             detail=f"Error validating AR registry: {str(e)}"
-#         )
-
-#### Validation endpoints:
 
 @app.post("/validate-ar")
 async def validate_ar(
