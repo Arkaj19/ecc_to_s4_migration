@@ -2,12 +2,22 @@ import axios from 'axios';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
+// Create a dedicated client for file uploads with longer timeout
+const fileUploadClient = axios.create({
+  baseURL: API_BASE_URL,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+  timeout: 600000, // 10 minutes for large files (was 300000/5 minutes)
+});
+
+// Keep the original client for quick JSON requests
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
   headers: {
     'Content-Type': 'application/json',
   },
-  timeout: 300000, // 5 minutes for large files
+  timeout: 30000, // 30 seconds for quick requests
 });
 
 // Health check — GET /health
@@ -22,8 +32,6 @@ export const checkHealth = async () => {
 };
 
 // Default ECC → S/4 mappings — GET /default-mappings
-// Shape: { cocd: [{ecc_cocd, s4_cocd}], plant_loc: [{ecc_plant, ecc_location,
-// s4_plant, s4_location}], cost_center: [{ecc_cost_center, s4_cost_center}] }
 export const getDefaultMappings = async () => {
   try {
     const response = await apiClient.get('/default-mappings');
@@ -36,15 +44,7 @@ export const getDefaultMappings = async () => {
 
 /**
  * Shared by every "upload a registry, get a populated template back" route
- * (/process-asset, /process-credit, /process-ap). Resolves to
- * { blob, filename, validationErrorCount }:
- *   - filename comes from the server's Content-Disposition header rather
- *     than being guessed on the frontend, since each route names its
- *     output differently.
- *   - validationErrorCount comes from X-Validation-Error-Count — the file
- *     is always generated even when some mandatory fields are missing, so
- *     this is how the caller knows whether to also fetch the detailed
- *     report from the matching /validate-* route.
+ * Now uses fileUploadClient with 10-minute timeout and progress tracking
  */
 const postForFile = async (endpoint, file, extraFields = {}, fallbackFilename = 'output.xlsx') => {
   const formData = new FormData();
@@ -54,22 +54,56 @@ const postForFile = async (endpoint, file, extraFields = {}, fallbackFilename = 
   });
 
   try {
-    const response = await apiClient.post(endpoint, formData, {
+    const response = await fileUploadClient.post(endpoint, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
       responseType: 'blob',
+      // Track upload progress
+      onUploadProgress: (progressEvent) => {
+        if (progressEvent.total) {
+          const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+          console.log(`${endpoint} upload progress: ${percentCompleted}%`);
+        }
+      },
     });
+
+    const contentType = response.headers['content-type'] || response.data?.type || '';
+
+    if (contentType.includes('application/json')) {
+      const text = await response.data.text();
+      const payload = JSON.parse(text);
+      return { reviewRequired: true, payload };
+    }
 
     const disposition = response.headers['content-disposition'] || '';
     const match = disposition.match(/filename="?([^"]+)"?/);
     const filename = match ? match[1] : fallbackFilename;
     const validationErrorCount = parseInt(response.headers['x-validation-error-count'] || '0', 10);
     const skippedSheetsCount = parseInt(response.headers['x-skipped-sheets-count'] || '0', 10);
+    const currencyReview = {
+      status: response.headers['x-currency-review-status'] || null,
+      action: response.headers['x-currency-action'] || null,
+      mismatchCount: parseInt(response.headers['x-currency-mismatch-count'] || '0', 10),
+      dumpRows: parseInt(response.headers['x-currency-dump-rows'] || '0', 10),
+      retainedRows: parseInt(response.headers['x-currency-retained-rows'] || '0', 10),
+    };
 
-    return { blob: response.data, filename, validationErrorCount, skippedSheetsCount };
+    return {
+      reviewRequired: false,
+      blob: response.data,
+      filename,
+      validationErrorCount,
+      skippedSheetsCount,
+      currencyReview,
+    };
   } catch (error) {
-    // With responseType: 'blob', a FastAPI error response (400/500 JSON)
-    // arrives as a Blob too, so error.message is useless on its own —
-    // read the blob back out as text to get the real `detail` message.
+    // Handle timeout specifically
+    if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
+      console.error(`${endpoint} timed out:`, error);
+      throw new Error(
+        `Processing timed out. Your file (${Math.round(file.size / 1024 / 1024)}MB) is taking too long. Please try again or contact support.`
+      );
+    }
+
     if (error.response?.data instanceof Blob) {
       let detail = null;
       try {
@@ -89,11 +123,7 @@ const postForFile = async (endpoint, file, extraFields = {}, fallbackFilename = 
 };
 
 /**
- * Shared by every /validate-* route. These return a plain JSON report —
- * { valid, errors: [{sheet, column, missing_rows, message}] } — rather
- * than a file, so error handling is simpler than postForFile: axios
- * already parses a FastAPI error body normally since responseType stays
- * the default 'json'.
+ * Shared by every /validate-* route. These return a plain JSON report
  */
 const postForJson = async (endpoint, file, extraFields = {}) => {
   const formData = new FormData();
@@ -115,60 +145,44 @@ const postForJson = async (endpoint, file, extraFields = {}) => {
 };
 
 // Process the asset registry — POST /process-asset
-// `mappingOverrides`, if provided, is sent as the `mappings_json` field in
-// the same shape /default-mappings returns, and the backend merges it over
-// the built-in mapping tables for this run only.
 export const processAssetFile = (file, mappingOverrides = null) => {
   const extraFields = mappingOverrides ? { mappings_json: JSON.stringify(mappingOverrides) } : {};
   return postForFile('/process-asset', file, extraFields, 'assets_load_template_filled.xlsx');
 };
 
 // Process the credit registry — POST /process-credit
-// No mapping overrides supported on this route — the backend hardcodes the
-// Profile/Segment field mapping for now.
 export const processCreditFile = (file) => {
   return postForFile('/process-credit', file, {}, 'credit_data_load_filled.xlsx');
 };
 
 // Process the AP registry — POST /process-ap
-// No mapping overrides supported on this route either — Payment Terms,
-// Company Code, and Tax Code are all mapped internally on the backend.
 export const processApFile = (file) => {
   return postForFile('/process-ap', file, {}, 'AP_Data_Load_SIT2_filled.xlsx');
 };
 
 // Process the AR registry — POST /process-ar
-export const processArFile = (file) => {
-  return postForFile('/process-ar', file, {}, 'ar_data_load_filled.xlsx');
+export const processArFile = (file, currencyAction = null) => {
+  const extraFields = currencyAction ? { currency_action: currencyAction } : {};
+  return postForFile('/process-ar', file, extraFields, 'ar_data_load_filled.xlsx');
 };
 
-// Detailed mandatory-field validation reports — same underlying mapping
-// logic as the matching /process-* route, but returns the report instead
-// of the file. Only worth calling when processFile's validationErrorCount
-// came back > 0.
+// Detailed mandatory-field validation reports
 export const validateAssetFile = (file, mappingOverrides = null) => {
   const extraFields = mappingOverrides ? { mappings_json: JSON.stringify(mappingOverrides) } : {};
   return postForJson('/validate-asset', file, extraFields);
 };
 
 export const validateCreditFile = (file) => postForJson('/validate-credit', file);
-
 export const validateApFile = (file) => postForJson('/validate-ap', file);
 
-// Data Validation tab — compares an original ECC AR registry against the
-// already-migrated S/4 output file. POST /validate-ar was repurposed for
-// this (previously it checked a single freshly-processed AR file for
-// missing mandatory fields — that contract no longer exists; there is
-// currently no AR mandatory-field check available from processing).
-// Returns { process, overall_status, summary: {total_checks, passed,
-// failed}, checks: [{check_name, status, message, ...}] }.
+// Data Validation tab — compares an original ECC AR registry against the already-migrated S/4 output file
 export const validateArMigration = async (eccRegistryFile, s4FilledFile) => {
   const formData = new FormData();
   formData.append('registry_file', eccRegistryFile);
   formData.append('filled_file', s4FilledFile);
 
   try {
-    const response = await apiClient.post('/validate-ar', formData, {
+    const response = await fileUploadClient.post('/validate-ar', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
     return response.data;
