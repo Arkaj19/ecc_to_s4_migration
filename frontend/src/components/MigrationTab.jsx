@@ -7,8 +7,10 @@ import MappingDisplay from './MappingDisplay';
 import StatusMessage from './StatusMessage';
 import ProcessButton from './ProcessButton';
 import DownloadButton from './DownloadButton';
+import CurrencyReviewCard from './CurrencyReviewCard';
 import StageTracker from './StageTracker';
 import ValidationReport from './ValidationReport';
+import ProcessingStatus from './ProcessingStatus'; // NEW
 
 import {
   processAssetFile,
@@ -59,9 +61,19 @@ function MigrationTab({ isConnected, connectionChecked }) {
   const [downloaded, setDownloaded] = useState(false);
   const [validationReport, setValidationReport] = useState(null);
   const [validationLoading, setValidationLoading] = useState(false);
+  // AR-only: set when /process-ar comes back with a currency-mismatch
+  // review payload instead of a file. Cleared once the user picks
+  // KEEP/DELETE and the real file comes back.
+  const [currencyReview, setCurrencyReview] = useState(null);
+  const [currencyActionSubmitting, setCurrencyActionSubmitting] = useState(false);
   const [mappings, setMappings] = useState(null);
   const [mappingsLoading, setMappingsLoading] = useState(false);
   const [status, setStatus] = useState({ type: null, message: null, details: null });
+  
+  // NEW: Timeout and processing tracking states
+  const [timeoutError, setTimeoutError] = useState(false);
+  const [processingTime, setProcessingTime] = useState(0);
+  const [isLongOperation, setIsLongOperation] = useState(false);
 
   // Connection health is owned by App.jsx (Header needs it too, and it's
   // app-shell state, not Migration-specific) — this only loads the
@@ -93,6 +105,33 @@ function MigrationTab({ isConnected, connectionChecked }) {
     loadMappings();
   }, [connectionChecked, isConnected]);
 
+  // NEW: Timer for tracking processing time
+  useEffect(() => {
+    let timer;
+    if (processing) {
+      setProcessingTime(0);
+      timer = setInterval(() => {
+        setProcessingTime(prev => prev + 1);
+      }, 1000);
+    } else {
+      setProcessingTime(0);
+    }
+    return () => clearInterval(timer);
+  }, [processing]);
+
+  // NEW: Detect long operations (> 30 seconds)
+  useEffect(() => {
+    let timer;
+    if (processing) {
+      timer = setTimeout(() => {
+        setIsLongOperation(true);
+      }, 30000);
+    } else {
+      setIsLongOperation(false);
+    }
+    return () => clearTimeout(timer);
+  }, [processing]);
+
   const handleFileUpload = async (uploadedFile) => {
     setFile(uploadedFile);
     setProcessedFile(null);
@@ -102,6 +141,8 @@ function MigrationTab({ isConnected, connectionChecked }) {
     setDownloaded(false);
     setValidationReport(null);
     setValidationLoading(false);
+    setCurrencyReview(null);
+    setTimeoutError(false); // NEW
     setStatus({ type: null, message: null });
 
     if (!uploadedFile) return;
@@ -140,45 +181,107 @@ function MigrationTab({ isConnected, connectionChecked }) {
 
     setProcessing(true);
     setProcessError(false);
+    setTimeoutError(false); // NEW
     setProcessedFile(null);
     setDownloaded(false);
     setValidationReport(null);
-    setStatus({ type: 'info', message: `Processing ${file.name}...` });
+    setCurrencyReview(null);
+    setStatus({ 
+      type: 'info', 
+      message: `Processing ${file.name}...`, 
+      details: `File size: ${(file.size / 1024 / 1024).toFixed(2)} MB, ${previewData?.totalRows || 0} rows` 
+    });
 
     try {
       const handler = PROCESS_HANDLERS[selectedProcess];
       const result = await handler(file);
-
-      setProcessedFile(result);
-      setStatus({
-        type: 'success',
-        message: 'Processing complete',
-        details: `Generated ${PROCESS_OPTIONS[selectedProcess].label.toLowerCase()} load sheet with ${previewData?.totalRows || 0} rows`,
-      });
-
-      const validateFn = VALIDATE_HANDLERS[selectedProcess];
-
-      if (!validateFn) {
-        setValidationReport(null);
-      } else if (result.validationErrorCount > 0 || result.skippedSheetsCount > 0) {
-        setValidationLoading(true);
-        try {
-          const report = await validateFn(file);
-          setValidationReport(report);
-        } catch {
-          // Validation detail fetch failing shouldn't block the user from
-          // downloading the file they already successfully generated.
-        } finally {
-          setValidationLoading(false);
-        }
+      await handleProcessResult(result);
+    } catch (error) {
+      setProcessError(true);
+      // Check if it's a timeout error
+      if (error.message.includes('timed out') || error.message.includes('timeout')) {
+        setTimeoutError(true);
+        setStatus({ 
+          type: 'error', 
+          message: 'Processing timed out', 
+          details: `The server took more than 10 minutes to process ${previewData?.totalRows || 0} rows. Please try again with a smaller file or contact support.` 
+        });
       } else {
-        setValidationReport({ valid: true, errors: [], skipped_sheets: [] });
+        setStatus({ type: 'error', message: 'Processing failed', details: error.message });
       }
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  // Shared by the first /process-ar call and the KEEP/DELETE resubmit —
+  // both can return either a real file or (AR only, first call) a
+  // currency-mismatch review payload.
+  const handleProcessResult = async (result) => {
+    if (result.reviewRequired) {
+      // Not a file — the backend needs the user to choose KEEP or DELETE
+      // before it will generate the migration file. Stop here instead of
+      // treating this as a successful, downloadable result.
+      setCurrencyReview(result.payload);
+      setStatus({
+        type: 'info',
+        message: `${result.payload.mismatch_count} currency mismatch${result.payload.mismatch_count === 1 ? '' : 'es'} found`,
+        details: 'Choose whether to keep or delete the affected rows before the load sheet is generated.',
+      });
+      return;
+    }
+
+    setProcessedFile(result);
+    setCurrencyReview(null);
+
+    const currencyDetails = result.currencyReview?.mismatchCount
+      ? ` (${result.currencyReview.action === 'DELETE'
+          ? `${result.currencyReview.dumpRows} row(s) moved to the mismatch log sheet`
+          : `${result.currencyReview.mismatchCount} row(s) highlighted red`})`
+      : '';
+
+    setStatus({
+      type: 'success',
+      message: 'Processing complete',
+      details: `Generated ${PROCESS_OPTIONS[selectedProcess].label.toLowerCase()} load sheet with ${previewData?.totalRows || 0} rows${currencyDetails}`,
+    });
+
+    const validateFn = VALIDATE_HANDLERS[selectedProcess];
+
+    if (!validateFn) {
+      setValidationReport(null);
+    } else if (result.validationErrorCount > 0 || result.skippedSheetsCount > 0) {
+      setValidationLoading(true);
+      try {
+        const report = await validateFn(file);
+        setValidationReport(report);
+      } catch {
+        // Validation detail fetch failing shouldn't block the user from
+        // downloading the file they already successfully generated.
+      } finally {
+        setValidationLoading(false);
+      }
+    } else {
+      setValidationReport({ valid: true, errors: [], skipped_sheets: [] });
+    }
+  };
+
+  // AR-only: user picked KEEP or DELETE on the CurrencyReviewCard.
+  // Re-submits the same file with currency_action so the backend returns
+  // the actual generated workbook this time.
+  const handleCurrencyAction = async (action) => {
+    setCurrencyActionSubmitting(true);
+    setProcessError(false);
+    setStatus({ type: 'info', message: `Applying ${action}...` });
+
+    try {
+      const result = await processArFile(file, action);
+      await handleProcessResult(result);
     } catch (error) {
       setProcessError(true);
       setStatus({ type: 'error', message: 'Processing failed', details: error.message });
     } finally {
-      setProcessing(false);
+      setCurrencyActionSubmitting(false);
     }
   };
 
@@ -201,7 +304,15 @@ function MigrationTab({ isConnected, connectionChecked }) {
     {
       key: 'process',
       label: 'Process',
-      status: processing ? 'active' : processError ? 'error' : processedFile ? 'success' : 'pending',
+      status: processing || currencyActionSubmitting
+        ? 'active'
+        : processError
+        ? 'error'
+        : processedFile
+        ? 'success'
+        : currencyReview
+        ? 'active'
+        : 'pending',
     },
     {
       key: 'download',
@@ -246,6 +357,53 @@ function MigrationTab({ isConnected, connectionChecked }) {
               isConnected={isConnected}
             />
 
+            {/* NEW: Show processing status */}
+            {processing && previewData && previewData.totalRows > 0 && (
+              <ProcessingStatus
+                totalRows={previewData.totalRows}
+                elapsedTime={processingTime}
+                fileSize={file?.size || 0}
+              />
+            )}
+
+            {/* NEW: Show long operation warning for small files that are taking long */}
+            {isLongOperation && processing && previewData && previewData.totalRows <= 10000 && (
+              <div className="mt-2 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                <p className="text-sm text-yellow-800">
+                  ⏳ Processing is taking longer than expected for {previewData.totalRows} rows.
+                </p>
+                <div className="mt-1 w-full bg-yellow-200 rounded-full h-1.5 overflow-hidden">
+                  <div className="bg-yellow-600 h-1.5 rounded-full animate-pulse" style={{ width: '100%' }} />
+                </div>
+              </div>
+            )}
+
+            {/* NEW: Show timeout error */}
+            {timeoutError && (
+              <div className="mt-2 p-3 bg-red-50 border border-red-200 rounded-lg">
+                <p className="text-sm text-red-800 font-medium">⚠️ Processing Timeout</p>
+                <p className="text-xs text-red-700 mt-1">
+                  The server timed out after {processingTime} seconds. 
+                  Your file has {previewData?.totalRows || 0} rows.
+                </p>
+                <button
+                  onClick={handleProcess}
+                  className="mt-2 text-xs text-red-600 hover:text-red-800 font-medium underline"
+                >
+                  Try Again
+                </button>
+              </div>
+            )}
+
+            {currencyReview && (
+              <CurrencyReviewCard
+                payload={currencyReview}
+                onKeep={() => handleCurrencyAction('KEEP')}
+                onDelete={() => handleCurrencyAction('DELETE')}
+                isSubmitting={currencyActionSubmitting}
+              />
+            )}
+
             {processedFile && (
               <DownloadButton
                 blob={processedFile.blob}
@@ -254,7 +412,7 @@ function MigrationTab({ isConnected, connectionChecked }) {
               />
             )}
 
-            {file && isConnected && PROCESS_OPTIONS[selectedProcess]?.status === 'active' && !processing && !processedFile && (
+            {file && isConnected && PROCESS_OPTIONS[selectedProcess]?.status === 'active' && !processing && !processedFile && !currencyReview && (
               <div className="flex items-center justify-center gap-1.5 text-xs text-gray-500">
                 <span className="w-1.5 h-1.5 rounded-full bg-green-500"></span>
                 Ready to process {file.name}
