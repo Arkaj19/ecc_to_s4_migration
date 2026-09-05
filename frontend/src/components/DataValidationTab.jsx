@@ -1,12 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
 import FileUpload from './FileUpload';
 import ValidationProcessSelector, { VALIDATION_PROCESS_OPTIONS } from './ValidationProcessSelector';
 import StatusMessage from './StatusMessage';
 import ValidationSummaryLog from './ValidationSummaryLog';
 import ValidationScoreboard from './ValidationScoreboard';
+import ProcessingStatus from './ProcessingStatus';
 
 import { validateArMigration } from '../api/client';
+import { previewExcelFile } from '../utils/excelPreview';
 
 // Maps each active validation process to its API call. Same pattern as
 // MigrationTab's PROCESS_HANDLERS — add an entry here when a process
@@ -23,8 +25,49 @@ function DataValidationTab({ isConnected }) {
   const [result, setResult] = useState(null);
   const [status, setStatus] = useState({ type: null, message: null, details: null });
 
+  // Drives the ProcessingStatus progress bar below, same as MigrationTab.
+  // The ECC file is read client-side just for its row count (no visible
+  // preview here) so the bar has something to estimate against.
+  const [eccRowCount, setEccRowCount] = useState(0);
+  const [validationTime, setValidationTime] = useState(0);
+
   const isSupported = VALIDATION_PROCESS_OPTIONS[selectedProcess]?.status === 'active';
   const canRun = isConnected && isSupported && eccFile && s4File && !running;
+
+  // Elapsed-time ticker while validation is running — feeds ProcessingStatus's
+  // elapsedTime prop the same way MigrationTab's processingTime does.
+  useEffect(() => {
+    let timer;
+    if (running) {
+      setValidationTime(0);
+      timer = setInterval(() => {
+        setValidationTime((prev) => prev + 1);
+      }, 1000);
+    } else {
+      setValidationTime(0);
+    }
+    return () => clearInterval(timer);
+  }, [running]);
+
+  const handleEccFileUpload = async (uploadedFile) => {
+    setEccFile(uploadedFile);
+    setEccRowCount(0);
+    setResult(null);
+    setStatus({ type: null, message: null });
+
+    if (!uploadedFile) return;
+
+    try {
+      const preview = await previewExcelFile(uploadedFile, 1);
+      if (preview.success) {
+        setEccRowCount(preview.total_rows);
+      }
+    } catch {
+      // Row count is only used to drive the progress-bar estimate — if it
+      // can't be read, the bar just won't render; validation itself isn't
+      // blocked by this.
+    }
+  };
 
   const handleRun = async () => {
     if (!canRun) return;
@@ -62,7 +105,7 @@ function DataValidationTab({ isConnected }) {
           <FileUpload
             title="Original ECC File"
             dropText="the original ECC registry"
-            onFileUpload={setEccFile}
+            onFileUpload={handleEccFileUpload}
             file={eccFile}
             disabled={running}
           />
@@ -97,6 +140,14 @@ function DataValidationTab({ isConnected }) {
                 ? 'Upload both files first'
                 : 'Run Validation'}
             </button>
+
+            {running && eccRowCount > 0 && (
+              <ProcessingStatus
+                totalRows={eccRowCount}
+                elapsedTime={validationTime}
+                fileSize={eccFile?.size || 0}
+              />
+            )}
           </div>
         </div>
 
