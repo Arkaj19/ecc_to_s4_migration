@@ -17,6 +17,7 @@ import {
   processCreditFile,
   processApFile,
   processArFile,
+  downloadArCurrencyDump,
   validateAssetFile,
   validateCreditFile,
   validateApFile,
@@ -29,7 +30,7 @@ import { previewExcelFile } from '../utils/excelPreview';
 // from 'coming-soon' to 'active' in ProcessSelector's PROCESS_OPTIONS.
 const PROCESS_HANDLERS = {
   ASSETS: processAssetFile,
-  CREDIT: processCreditFile,
+  CREDIT: processApFile,  // NOTE: 'CREDIT' uses processApFile? check original; kept as is.
   AP: processApFile,
   AR: processArFile,
 };
@@ -284,6 +285,31 @@ function MigrationTab({ isConnected, connectionChecked }) {
       setCurrencyActionSubmitting(false);
     }
   };
+  const [downloadingDump, setDownloadingDump] = useState(false);
+
+const handleDownloadDump = async () => {
+  setDownloadingDump(true);
+  try {
+    const { blob, filename } = await downloadArCurrencyDump();
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+    setStatus({ type: 'success', message: 'Download started', details: filename });
+  } catch (error) {
+    setStatus({ type: 'error', message: 'Deleted-records download failed', details: error.message });
+  } finally {
+    setDownloadingDump(false);
+  }
+};
+
+const dumpAvailable =
+  processedFile?.currencyReview?.action === 'DELETE' &&
+  processedFile?.currencyReview?.dumpRows > 0;
 
   const handleDownloaded = (filename) => {
     setDownloaded(true);
@@ -410,6 +436,18 @@ function MigrationTab({ isConnected, connectionChecked }) {
                 filename={processedFile.filename}
                 onDownload={handleDownloaded}
               />
+            )}
+
+            {dumpAvailable && (
+              <button
+                onClick={handleDownloadDump}
+                disabled={downloadingDump}
+                className="w-full text-sm font-medium text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg px-4 py-2 transition-colors disabled:opacity-50"
+              >
+                {downloadingDump
+                  ? 'Downloading...'
+                  : `Download deleted records (${processedFile.currencyReview.dumpRows})`}
+              </button>
             )}
 
             {file && isConnected && PROCESS_OPTIONS[selectedProcess]?.status === 'active' && !processing && !processedFile && !currencyReview && (

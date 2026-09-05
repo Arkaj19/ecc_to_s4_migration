@@ -1,4 +1,3 @@
-
 """
 AR Validation Report Generator
 
@@ -359,7 +358,12 @@ def create_comparison_chart(
     ax.set_title(title)
     ax.set_ylabel(ylabel)
     ax.set_xticks(x)
-    ax.set_xticklabels(labels)
+    # ax.set_xticklabels(labels)
+    avg_label_length = sum(len(label) for label in labels) / max(len(labels), 1)
+    if avg_label_length > 10:
+        ax.set_xticklabels(labels, rotation=20, ha="right", fontsize=8)
+    else:
+        ax.set_xticklabels(labels, fontsize=9)
     ax.legend()
     ax.grid(axis="y", alpha=0.2)
 
@@ -385,7 +389,17 @@ def create_company_code_chart(
     if not valid_details:
         return None
 
-    labels = [detail["label"] for detail in valid_details]
+    # labels = [detail["label"] for detail in valid_details]
+    labels = []
+    for detail in valid_details:
+        ecc_code = detail.get("ecc_code") or detail.get("label", "")
+        direction = detail.get("direction")
+        if direction == "S":
+            labels.append(f"{ecc_code}\nDebit (S)")
+        elif direction == "H":
+            labels.append(f"{ecc_code}\nCredit (H)")
+        else:
+            labels.append(detail.get("label", ""))
     ecc_values = [detail["left_count"] for detail in valid_details]
     s4_values = [detail["right_count"] for detail in valid_details]
 
@@ -398,6 +412,38 @@ def create_company_code_chart(
         output_path=output_path,
     )
 
+def create_unique_document_chart(
+    check: Dict[str, Any],
+    output_path: Path,
+) -> Optional[Path]:
+    details = check.get("details", [])
+
+    # A company code with no ECC -> S/4 mapping produces a
+    # "MAPPING_ERROR" row with both counts set to None -- skip those,
+    # same as create_company_code_chart does.
+    valid_details = [
+        detail
+        for detail in details
+        if detail.get("left_count") is not None
+        and detail.get("right_count") is not None
+    ]
+
+    if not valid_details:
+        return None
+
+    labels = [detail["label"] for detail in valid_details]
+    ecc_values = [detail["left_count"] for detail in valid_details]
+    s4_values = [detail["right_count"] for detail in valid_details]
+
+    return create_comparison_chart(
+        labels=labels,
+        ecc_values=ecc_values,
+        s4_values=s4_values,
+        title="Unique Document Number Count — ECC vs S/4",
+        ylabel="Unique Document Count",
+        output_path=output_path,
+    )
+
 
 def create_sign_chart(
     check: Dict[str, Any],
@@ -405,12 +451,22 @@ def create_sign_chart(
 ) -> Optional[Path]:
     details = check.get("details", [])
 
-    if not details:
+    # Same reasoning as create_payment_terms_chart: a company code with
+    # no ECC -> S/4 mapping produces a "MAPPING_ERROR" row with both
+    # counts set to None, which matplotlib can't plot.
+    valid_details = [
+        detail
+        for detail in details
+        if detail.get("left_count") is not None
+        and detail.get("right_count") is not None
+    ]
+
+    if not valid_details:
         return None
 
-    labels = [detail["label"] for detail in details]
-    ecc_values = [detail["left_count"] for detail in details]
-    s4_values = [abs(detail["right_count"]) for detail in details]
+    labels = [detail["label"] for detail in valid_details]
+    ecc_values = [detail["left_count"] for detail in valid_details]
+    s4_values = [abs(detail["right_count"]) for detail in valid_details]
 
     return create_comparison_chart(
         labels=labels,
@@ -428,12 +484,25 @@ def create_payment_terms_chart(
 ) -> Optional[Path]:
     details = check.get("details", [])
 
-    if not details:
+    # Rows like "Unmapped ECC terms" or "S/4 terms with other prefix"
+    # only have a count on one side (the other is deliberately None,
+    # since there's nothing on the opposite side to compare against).
+    # Charting a None height crashes matplotlib, so only plot rows that
+    # have a real count on both sides -- same rule create_company_code_chart
+    # already applies.
+    valid_details = [
+        detail
+        for detail in details
+        if detail.get("left_count") is not None
+        and detail.get("right_count") is not None
+    ]
+
+    if not valid_details:
         return None
 
-    labels = [detail["label"] for detail in details]
-    ecc_values = [detail["left_count"] for detail in details]
-    s4_values = [detail["right_count"] for detail in details]
+    labels = [detail["label"] for detail in valid_details]
+    ecc_values = [detail["left_count"] for detail in valid_details]
+    s4_values = [detail["right_count"] for detail in valid_details]
 
     return create_comparison_chart(
         labels=labels,
@@ -621,6 +690,37 @@ def build_company_code_table(check: Dict[str, Any]) -> Table:
     return table
 
 
+def build_unique_document_table(check: Dict[str, Any]) -> Table:
+    rows = [[
+        "ECC Company Code",
+        "S/4 Company Code",
+        "ECC Unique Documents",
+        "S/4 Unique XREF1",
+        "Difference",
+        "Result",
+    ]]
+
+    for detail in check.get("details", []):
+        left = detail.get("left_count")
+        right = detail.get("right_count")
+        rows.append([
+            _escape(detail.get("ecc_code")),
+            _escape(detail.get("s4_code")),
+            _format_number(left),
+            _format_number(right),
+            _format_number(None if left is None or right is None else left - right),
+            _status_label(detail.get("status")),
+        ])
+
+    table = Table(
+        rows,
+        colWidths=[30 * mm, 30 * mm, 32 * mm, 32 * mm, 25 * mm, 25 * mm],
+        repeatRows=1,
+    )
+    table.setStyle(_table_style())
+    return table
+
+
 def build_sign_table(check: Dict[str, Any]) -> Table:
     rows = [[
         "Category",
@@ -631,12 +731,14 @@ def build_sign_table(check: Dict[str, Any]) -> Table:
     ]]
 
     for detail in check.get("details", []):
+        left = detail.get("left_count")
+        right = detail.get("right_count")
         rows.append([
             _escape(detail.get("label")),
-            _format_number(detail.get("left_count"), True),
-            _format_number(abs(detail.get("right_count", 0)), True),
+            _format_number(left, True),
+            _format_number(None if right is None else abs(right), True),
             _format_number(
-                detail.get("left_count", 0) - abs(detail.get("right_count", 0)),
+                None if left is None or right is None else left - abs(right),
                 True,
             ),
             _status_label(detail.get("status")),
@@ -655,9 +757,7 @@ def build_payment_terms_table(check: Dict[str, Any]) -> Table:
     styles = _styles()
 
     rows = [[
-        Paragraph("<b>Set</b>", styles["SmallCustom"]),
-        Paragraph("<b>ECC Payment Terms</b>", styles["SmallCustom"]),
-        Paragraph("<b>S/4 Payment Terms</b>", styles["SmallCustom"]),
+        Paragraph("<b>Group</b>", styles["SmallCustom"]),
         Paragraph("<b>ECC Count</b>", styles["SmallCustom"]),
         Paragraph("<b>S/4 Count</b>", styles["SmallCustom"]),
         Paragraph("<b>Difference</b>", styles["SmallCustom"]),
@@ -665,19 +765,15 @@ def build_payment_terms_table(check: Dict[str, Any]) -> Table:
     ]]
 
     for detail in check.get("details", []):
-        ecc_terms = ", ".join(detail.get("ecc_terms", []))
-        s4_terms = ", ".join(detail.get("s4_terms", []))
+        left = detail.get("left_count")
+        right = detail.get("right_count")
 
         rows.append([
             Paragraph(_escape(detail.get("label")), styles["SmallCustom"]),
-            Paragraph(_escape(ecc_terms), styles["SmallCustom"]),
-            Paragraph(_escape(s4_terms), styles["SmallCustom"]),
-            Paragraph(_format_number(detail.get("left_count")), styles["SmallCustom"]),
-            Paragraph(_format_number(detail.get("right_count")), styles["SmallCustom"]),
+            Paragraph(_format_number(left), styles["SmallCustom"]),
+            Paragraph(_format_number(right), styles["SmallCustom"]),
             Paragraph(
-                _format_number(
-                    detail.get("left_count", 0) - detail.get("right_count", 0)
-                ),
+                _format_number(None if left is None or right is None else left - right),
                 styles["SmallCustom"],
             ),
             Paragraph(_status_label(detail.get("status")), styles["SmallCustom"]),
@@ -686,13 +782,11 @@ def build_payment_terms_table(check: Dict[str, Any]) -> Table:
     table = Table(
         rows,
         colWidths=[
-            16 * mm,
-            43 * mm,
-            43 * mm,
-            22 * mm,
-            22 * mm,
-            22 * mm,
-            20 * mm,
+            40 * mm,
+            35 * mm,
+            35 * mm,
+            25 * mm,
+            25 * mm,
         ],
         repeatRows=1,
     )
@@ -813,6 +907,11 @@ def generate_ar_validation_report(
         chart_dir / "amount_sign_validation.png",
     )
 
+    unique_document_chart = create_unique_document_chart(
+        _find_check(validation_payload, "Unique Document Number Count"),
+        chart_dir / "unique_document_number_count.png",
+    )
+
     payment_chart = create_payment_terms_chart(
         _find_check(validation_payload, "Payment Terms Group Count"),
         chart_dir / "payment_terms_groups.png",
@@ -925,56 +1024,56 @@ def generate_ar_validation_report(
 
     story.append(PageBreak())
 
-    # ========================================================
-    # Validation 1
-    # ========================================================
+    # # ========================================================
+    # # Validation 1
+    # # ========================================================
 
-    record_check = _find_check(
-        validation_payload,
-        "Total Record Count",
-    )
+    # record_check = _find_check(
+    #     validation_payload,
+    #     "Total Record Count",
+    # )
 
-    story.append(
-        Paragraph(
-            "1. Total Record Count Validation",
-            styles["SectionHeadingCustom"],
-        )
-    )
+    # story.append(
+    #     Paragraph(
+    #         "1. Total Record Count Validation",
+    #         styles["SectionHeadingCustom"],
+    #     )
+    # )
 
-    story.append(
-        _paragraph(
-            narratives["record_count_explanation"],
-            styles["BodyCustom"],
-        )
-    )
+    # story.append(
+    #     _paragraph(
+    #         narratives["record_count_explanation"],
+    #         styles["BodyCustom"],
+    #     )
+    # )
 
-    detail = record_check.get("details", [{}])[0]
+    # detail = record_check.get("details", [{}])[0]
 
-    story.append(
-        build_simple_result_table(
-            label="Total Records",
-            left_label="ECC",
-            right_label="S/4",
-            left_value=detail.get("left_count"),
-            right_value=detail.get("right_count"),
-            difference=(
-                detail.get("left_count", 0)
-                - detail.get("right_count", 0)
-            ),
-            status=detail.get("status"),
-        )
-    )
+    # story.append(
+    #     build_simple_result_table(
+    #         label="Total Records",
+    #         left_label="ECC",
+    #         right_label="S/4",
+    #         left_value=detail.get("left_count"),
+    #         right_value=detail.get("right_count"),
+    #         difference=(
+    #             detail.get("left_count", 0)
+    #             - detail.get("right_count", 0)
+    #         ),
+    #         status=detail.get("status"),
+    #     )
+    # )
 
-    story.append(Spacer(1, 8))
+    # story.append(Spacer(1, 8))
 
-    story.append(
-        _paragraph(
-            record_check.get("message", ""),
-            styles["BodyCustom"],
-        )
-    )
+    # story.append(
+    #     _paragraph(
+    #         record_check.get("message", ""),
+    #         styles["BodyCustom"],
+    #     )
+    # )
 
-    story.append(PageBreak())
+    # story.append(PageBreak())
 
     # ========================================================
     # Validation 2
@@ -987,7 +1086,7 @@ def generate_ar_validation_report(
 
     story.append(
         Paragraph(
-            "2. Company Code Distribution",
+            "1. Company Code Distribution",
             styles["SectionHeadingCustom"],
         )
     )
@@ -1032,7 +1131,7 @@ def generate_ar_validation_report(
 
     story.append(
         Paragraph(
-            "3. Amount Sign Validation",
+            "2. Amount Sign Validation",
             styles["SectionHeadingCustom"],
         )
     )
@@ -1070,51 +1169,101 @@ def generate_ar_validation_report(
     # Validation 4
     # ========================================================
 
-    blank_check = _find_check(
+    unique_document_check = _find_check(
         validation_payload,
-        "Payment Terms Blank Count",
+        "Unique Document Number Count",
     )
 
     story.append(
         Paragraph(
-            "4. Payment Terms Blank Count",
+            "3. Unique Document Number Count",
             styles["SectionHeadingCustom"],
         )
     )
 
     story.append(
         _paragraph(
-            narratives["payment_terms_blank_explanation"],
+            "For each company code, this check compares the number of "
+            "distinct ECC Document Numbers against the number of distinct "
+            "S/4 XREF1 values (Reference Key 1), which the migration "
+            "populates from the ECC Document Number. Matching counts mean "
+            "every unique ECC document survived the migration exactly "
+            "once per company code.",
             styles["BodyCustom"],
         )
     )
 
-    blank_detail = blank_check.get("details", [{}])[0]
+    story.append(build_unique_document_table(unique_document_check))
+    story.append(Spacer(1, 10))
 
-    story.append(
-        build_simple_result_table(
-            label="Blank / No Payment Terms",
-            left_label="ECC",
-            right_label="S/4",
-            left_value=blank_detail.get("left_count"),
-            right_value=blank_detail.get("right_count"),
-            difference=(
-                blank_detail.get("left_count", 0)
-                - blank_detail.get("right_count", 0)
-            ),
-            status=blank_detail.get("status"),
+    if unique_document_chart and unique_document_chart.exists():
+        story.append(
+            Image(
+                str(unique_document_chart),
+                width=165 * mm,
+                height=93 * mm,
+            )
         )
-    )
 
     story.append(Spacer(1, 8))
     story.append(
         _paragraph(
-            blank_check.get("message", ""),
+            unique_document_check.get("message", ""),
             styles["BodyCustom"],
         )
     )
 
     story.append(PageBreak())
+
+    # # ========================================================
+    # # Validation 5
+    # # ========================================================
+
+    # blank_check = _find_check(
+    #     validation_payload,
+    #     "Payment Terms Blank Count",
+    # )
+
+    # story.append(
+    #     Paragraph(
+    #         "4. Payment Terms Blank Count",
+    #         styles["SectionHeadingCustom"],
+    #     )
+    # )
+
+    # story.append(
+    #     _paragraph(
+    #         narratives["payment_terms_blank_explanation"],
+    #         styles["BodyCustom"],
+    #     )
+    # )
+
+    # blank_detail = blank_check.get("details", [{}])[0]
+
+    # story.append(
+    #     build_simple_result_table(
+    #         label="Blank / No Payment Terms",
+    #         left_label="ECC",
+    #         right_label="S/4",
+    #         left_value=blank_detail.get("left_count"),
+    #         right_value=blank_detail.get("right_count"),
+    #         difference=(
+    #             blank_detail.get("left_count", 0)
+    #             - blank_detail.get("right_count", 0)
+    #         ),
+    #         status=blank_detail.get("status"),
+    #     )
+    # )
+
+    # story.append(Spacer(1, 8))
+    # story.append(
+    #     _paragraph(
+    #         blank_check.get("message", ""),
+    #         styles["BodyCustom"],
+    #     )
+    # )
+
+    # story.append(PageBreak())
 
     # ========================================================
     # Validation 5
@@ -1127,7 +1276,7 @@ def generate_ar_validation_report(
 
     story.append(
         Paragraph(
-            "5. Payment Terms Group Validation",
+            "4. Payment Terms Group Validation",
             styles["SectionHeadingCustom"],
         )
     )

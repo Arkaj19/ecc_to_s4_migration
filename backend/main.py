@@ -42,6 +42,12 @@ AP_TEMPLATE_PATH = os.path.join(
 # NEW: AR template path
 AR_TEMPLATE_PATH = os.path.join(BASE_DIR, "templates", "AR_TEMPLATE.xlsx")
 
+# Where rows deleted for a company-code / currency mismatch get saved
+# so the frontend can offer them as a separate download.
+AR_CURRENCY_DUMP_PATH = os.path.join(
+    REPORTS_DIR, "AR_Currency_Mismatch_Deleted.xlsx"
+)
+
 # Reference data (not templates) used for Supplier/Customer -> Business
 # Partner lookups (BUT sheet) and Customer -> Credit Rep Group lookups
 # (DAP Clerk Codes), shared by the Credit and AP processors.
@@ -498,8 +504,18 @@ async def process_ar(
     currency_action: str = Form(None),
 ):
     """
-    POST endpoint that takes the AR Registry Excel file
-    and returns the populated AR Data Load template.
+    POST endpoint that takes the AR Registry Excel file and returns the
+    populated AR Data Load template.
+
+    If the registry contains company-code / currency mismatches (1200 +
+    USD, 1000 + CAD) and no `currency_action` was supplied, no file is
+    generated — a JSON review payload is returned instead so the
+    frontend can prompt the user to choose:
+      - "keep": migrate everything, with mismatched rows highlighted
+        red in the output workbook.
+      - "delete": drop the mismatched rows from the output and make
+        them available separately via /download-ar-currency-dump.
+    Re-call this endpoint with the chosen `currency_action` to proceed.
     """
     if not file.filename.endswith((".xlsx", ".xls")):
         raise HTTPException(
@@ -524,12 +540,23 @@ async def process_ar(
         }
 
         if currency_review:
+            # The dump workbook (deleted rows) is saved to disk here so
+            # /download-ar-currency-dump can serve it as a follow-up
+            # request — a StreamingResponse can only return one file.
+            dump_buffer = currency_review.get("dump_buffer")
+            if dump_buffer is not None:
+                with open(AR_CURRENCY_DUMP_PATH, "wb") as dump_file:
+                    dump_file.write(dump_buffer.getvalue())
+
             response_headers.update({
                 "X-Currency-Review-Status": currency_review["status"],
                 "X-Currency-Action": str(currency_review["action"] or ""),
                 "X-Currency-Mismatch-Count": str(currency_review["mismatch_count"]),
                 "X-Currency-Dump-Rows": str(currency_review["dump_rows"]),
                 "X-Currency-Retained-Rows": str(currency_review["retained_rows"]),
+                "X-Currency-Dump-Available": str(
+                    currency_review.get("dump_buffer") is not None
+                ),
             })
 
         response_headers["Access-Control-Expose-Headers"] = ", ".join(response_headers.keys())
@@ -541,9 +568,9 @@ async def process_ar(
         )
 
     except CurrencyReviewRequiredError as e:
-        # IMPORTANT: no migration Excel file is returned here. The frontend
-        # must present KEEP/DELETE and call /process-ar again with the chosen
-        # currency_action.
+        # No migration file is returned here — the frontend must present
+        # a KEEP/DELETE choice to the user and call /process-ar again
+        # with the chosen currency_action.
         return e.review_payload
     except ARMismatchError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -554,6 +581,29 @@ async def process_ar(
             status_code=500,
             detail=f"Error processing AR registry: {str(e)}"
         )
+
+
+@app.get("/download-ar-currency-dump")
+async def download_ar_currency_dump():
+    """
+    Downloads the Excel file of rows removed from the last AR migration
+    run because of a company code / currency mismatch (only produced
+    when /process-ar was called with currency_action="delete").
+    """
+    if not os.path.exists(AR_CURRENCY_DUMP_PATH):
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "No deleted-records file is available yet. Run "
+                "/process-ar with currency_action=\"delete\" first."
+            ),
+        )
+
+    return FileResponse(
+        path=AR_CURRENCY_DUMP_PATH,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename="AR_Currency_Mismatch_Deleted.xlsx",
+    )
 
 
 #### Validation endpoints:
@@ -664,4 +714,4 @@ async def download_ar_report():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000) 
+    uvicorn.run(app, host="127.0.0.1", port=8000)

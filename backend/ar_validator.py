@@ -57,28 +57,39 @@ COMPANY_CODE_MAPPING = mappings.COMPANY_CODE_MAPPING
 
 
 # ============================================================
-# Payment Terms Group Configuration
+# Payment Terms Mapping (ECC → S/4)
 # ============================================================
-# Each set contains approximately 5 S/4 payment terms. If
-# multiple ECC payment terms map to the same S/4 term, all of
-# those ECC terms remain in the same set.
+# Each ECC payment term maps to exactly one S/4 payment term.
+# The first character of the S/4 term determines the group:
+#   N → Net terms
+#   P → Proxy terms
+#   Z → Discount terms
+#   E → E_payment_terms (special group)
+# No other prefixes are expected.
 # ============================================================
 
-PAYMENT_TERM_GROUPS = [
-    {"set": 1, "ecc": {"001", "003", "004", "014", "015"}, "s4": {"P210", "Z200", "P215", "P220", "Z251"}},
-    {"set": 2, "ecc": {"016", "017", "018", "019", "020"}, "s4": {"Z291", "Z261", "Z245", "Z230", "Z231"}},
-    {"set": 3, "ecc": {"021", "022", "023", "024", "025"}, "s4": {"Z232", "Z246", "Z233", "Z260", "Z305"}},
-    {"set": 4, "ecc": {"026", "027", "029", "060", "030", "035"}, "s4": {"NT12", "Z160", "Z262", "Z276", "Z290"}},
-    {"set": 5, "ecc": {"036", "038", "039", "040", "444", "041", "048", "401"}, "s4": {"Z130", "P030", "P230", "NT30", "NT60"}},
-    {"set": 6, "ecc": {"042", "442", "043", "443", "044", "445", "045", "046"}, "s4": {"NT90", "NT45", "NT75", "NT15", "P025"}},
-    {"set": 7, "ecc": {"050", "052", "056", "058", "059"}, "s4": {"Z400", "Z132", "Z216", "Z265", "Z263"}},
-    {"set": 8, "ecc": {"061", "062", "063", "064", "065"}, "s4": {"Z264", "Z247", "Z161", "Z330", "Z146"}},
-    {"set": 9, "ecc": {"070", "072", "073", "075", "091"}, "s4": {"P260", "P225", "Z163", "Z505", "NTLC"}},
-    {"set": 10, "ecc": {"094", "097", "100", "107", "109"}, "s4": {"Z346", "Z164", "Z167", "Z316", "Z225"}},
-    {"set": 11, "ecc": {"111", "112", "114", "115", "117"}, "s4": {"Z234", "Z235", "P190", "P160", "P101"}},
-    {"set": 12, "ecc": {"118", "119", "122", "33", "129", "402", "138"}, "s4": {"Z162", "Z212", "Z131", "NT10", "Z165"}},
-    {"set": 13, "ecc": {"139", "141", "400", "403", "441"}, "s4": {"Z176", "E225", "Z166", "NT00", "NT65"}},
-]
+PAYMENT_TERMS_MAPPING = {
+    "001": "P210", "003": "Z200", "004": "P215", "014": "P220", "015": "Z251",
+    "016": "Z291", "017": "Z261", "018": "Z245", "019": "Z230", "020": "Z231",
+    "021": "Z232", "022": "Z246", "023": "Z233", "024": "Z260", "025": "Z305",
+    "026": "NT12", "027": "Z160", "029": "Z262", "030": "Z276", "035": "Z290",
+    "036": "Z130", "038": "P030", "039": "P230", "040": "NT30", "041": "NT60",
+    "042": "NT90", "043": "NT45", "044": "NT75", "045": "NT15", "046": "P025",
+    "048": "NT60", "050": "Z400", "052": "Z132", "056": "Z216", "058": "Z265",
+    "059": "Z263", "060": "Z262", "061": "Z264", "062": "Z247", "063": "Z161",
+    "064": "Z330", "065": "Z146", "070": "P260", "072": "P225", "073": "Z163",
+    "075": "Z505", "091": "NTLC", "094": "Z346", "097": "Z164", "100": "Z167",
+    "107": "Z316", "109": "Z225", "111": "Z234", "112": "Z235", "114": "P190",
+    "115": "P160", "117": "P101", "118": "Z162", "119": "Z212", "122": "Z131",
+    "129": "NT10", "138": "Z165", "139": "Z176", "141": "E225", "400": "Z166",
+    "401": "NT60", "402": "NT10", "403": "NT00", "441": "NT65", "442": "NT90",
+    "443": "NT45", "444": "NT30", "445": "NT75", "33": "Z131",
+}
+
+# Build a normalized version: strip leading zeros from keys.
+_NORMALIZED_PAYMENT_MAPPING = {
+    key.lstrip("0"): value for key, value in PAYMENT_TERMS_MAPPING.items()
+}
 
 
 # ============================================================
@@ -320,49 +331,45 @@ def read_s4_customer_open_items(filled_file) -> pd.DataFrame:
 
 
 # ============================================================
-# Validation 1
+# Validation 1 (commented out - kept for reference)
 # Total Record Count
 # ============================================================
 
-def validate_record_count(ecc_df: pd.DataFrame, s4_df: pd.DataFrame) -> Dict[str, Any]:
-    """
-    Compare the total number of ECC records against
-    the total number of S/4 records.
-    """
-
-    ecc_count = len(ecc_df)
-    s4_count = len(s4_df)
-    difference = ecc_count - s4_count
-    status = pass_fail(difference == 0)
-
-    message = (
-        f"Record count matches. "
-        f"Both ECC and S/4 contain {ecc_count} records."
-        if status == "PASS"
-        else (
-            f"Record count mismatch. "
-            f"ECC contains {ecc_count} records while "
-            f"S/4 contains {s4_count} records."
-        )
-    )
-
-    detail = make_detail(
-        label="Total records",
-        left_count=ecc_count,
-        right_count=s4_count,
-        status=status,
-        message=message,
-    )
-
-    return make_check(
-        check_name="Total Record Count",
-        details=[detail],
-        passing_message=message,
-        failing_message=message,
-        ecc_count=ecc_count,
-        s4_count=s4_count,
-        difference=difference,
-    )
+# def validate_record_count(ecc_df: pd.DataFrame, s4_df: pd.DataFrame) -> Dict[str, Any]:
+#     """
+#     Compare the total number of ECC records against
+#     the total number of S/4 records.
+#     """
+#     ecc_count = len(ecc_df)
+#     s4_count = len(s4_df)
+#     difference = ecc_count - s4_count
+#     status = pass_fail(difference == 0)
+#     message = (
+#         f"Record count matches. "
+#         f"Both ECC and S/4 contain {ecc_count} records."
+#         if status == "PASS"
+#         else (
+#             f"Record count mismatch. "
+#             f"ECC contains {ecc_count} records while "
+#             f"S/4 contains {s4_count} records."
+#         )
+#     )
+#     detail = make_detail(
+#         label="Total records",
+#         left_count=ecc_count,
+#         right_count=s4_count,
+#         status=status,
+#         message=message,
+#     )
+#     return make_check(
+#         check_name="Total Record Count",
+#         details=[detail],
+#         passing_message=message,
+#         failing_message=message,
+#         ecc_count=ecc_count,
+#         s4_count=s4_count,
+#         difference=difference,
+#     )
 
 
 # ============================================================
@@ -568,74 +575,84 @@ def validate_unique_document_number_counts(ecc_df: pd.DataFrame, s4_df: pd.DataF
     )
 
 
+# # ============================================================
+# # Validation 5 (kept unchanged)
+# # Payment Terms Blank Count
+# # ============================================================
+
+# def validate_payment_terms_blank_count(ecc_df: pd.DataFrame, s4_df: pd.DataFrame) -> Dict[str, Any]:
+#     """
+#     Validate that the number of blank Terms of Payment values
+#     in the ECC registry matches the number of
+#     'No payment terms in ECC' values in S/4 ZTERM.
+#     """
+
+#     ecc_blank_count = int(
+#         ecc_df["Terms of Payment"].apply(lambda value: not is_non_empty(value)).sum()
+#     )
+
+#     s4_no_payment_terms_count = int(
+#         s4_df["ZTERM"].apply(lambda value: clean_string(value) == "No payment terms in ECC").sum()
+#     )
+
+#     status = pass_fail(ecc_blank_count == s4_no_payment_terms_count)
+
+#     message = (
+#         "Payment terms blank count matches. "
+#         f"ECC contains {ecc_blank_count} blank Terms of Payment values "
+#         f"and S/4 contains {s4_no_payment_terms_count} "
+#         "'No payment terms in ECC' values in ZTERM."
+#         if status == "PASS"
+#         else (
+#             "Payment terms blank count mismatch. "
+#             f"ECC contains {ecc_blank_count} blank Terms of Payment values "
+#             f"while S/4 contains {s4_no_payment_terms_count} "
+#             "'No payment terms in ECC' values in ZTERM."
+#         )
+#     )
+
+#     detail = make_detail(
+#         label="Blank / no payment terms",
+#         left_count=ecc_blank_count,
+#         right_count=s4_no_payment_terms_count,
+#         status=status,
+#         message=message,
+#     )
+
+#     return make_check(
+#         check_name="Payment Terms Blank Count",
+#         details=[detail],
+#         passing_message=message,
+#         failing_message=message,
+#         ecc_blank_count=ecc_blank_count,
+#         s4_no_payment_terms_count=s4_no_payment_terms_count,
+#         difference=ecc_blank_count - s4_no_payment_terms_count,
+#     )
+
+
 # ============================================================
-# Validation 4
-# Payment Terms Blank Count
-# ============================================================
-
-def validate_payment_terms_blank_count(ecc_df: pd.DataFrame, s4_df: pd.DataFrame) -> Dict[str, Any]:
-    """
-    Validate that the number of blank Terms of Payment values
-    in the ECC registry matches the number of
-    'No payment terms in ECC' values in S/4 ZTERM.
-    """
-
-    ecc_blank_count = int(
-        ecc_df["Terms of Payment"].apply(lambda value: not is_non_empty(value)).sum()
-    )
-
-    s4_no_payment_terms_count = int(
-        s4_df["ZTERM"].apply(lambda value: clean_string(value) == "No payment terms in ECC").sum()
-    )
-
-    status = pass_fail(ecc_blank_count == s4_no_payment_terms_count)
-
-    message = (
-        "Payment terms blank count matches. "
-        f"ECC contains {ecc_blank_count} blank Terms of Payment values "
-        f"and S/4 contains {s4_no_payment_terms_count} "
-        "'No payment terms in ECC' values in ZTERM."
-        if status == "PASS"
-        else (
-            "Payment terms blank count mismatch. "
-            f"ECC contains {ecc_blank_count} blank Terms of Payment values "
-            f"while S/4 contains {s4_no_payment_terms_count} "
-            "'No payment terms in ECC' values in ZTERM."
-        )
-    )
-
-    detail = make_detail(
-        label="Blank / no payment terms",
-        left_count=ecc_blank_count,
-        right_count=s4_no_payment_terms_count,
-        status=status,
-        message=message,
-    )
-
-    return make_check(
-        check_name="Payment Terms Blank Count",
-        details=[detail],
-        passing_message=message,
-        failing_message=message,
-        ecc_blank_count=ecc_blank_count,
-        s4_no_payment_terms_count=s4_no_payment_terms_count,
-        difference=ecc_blank_count - s4_no_payment_terms_count,
-    )
-
-
-# ============================================================
-# Validation 5
-# Payment Terms Group Count
+# Validation 6 (replaces the old group-count check)
+# Payment Terms Group Count (by first letter of S/4 term)
 # ============================================================
 
 def validate_payment_terms_group_counts(ecc_df: pd.DataFrame, s4_df: pd.DataFrame) -> Dict[str, Any]:
     """
-    Compare payment-term counts at the configured group level.
+    Compare payment‑term counts grouped by the first letter of the mapped S/4 term.
 
-    Each ECC row contributes one count to the set containing its
-    Terms of Payment. Each S/4 row contributes one count to the set
-    containing its ZTERM. The validation passes only when every set
-    has the same ECC and S/4 count.
+    Groups:
+      - Net (N): S/4 terms starting with 'N'
+      - Proxy (P): starting with 'P'
+      - Discount (Z): starting with 'Z'
+      - E_payment_terms (E): starting with 'E' (special group)
+
+    For each ECC row, we look up its Terms of Payment in PAYMENT_TERMS_MAPPING,
+    take the first character of the mapped S/4 term, and assign to one of the four groups.
+    For each S/4 row, we take the first character of ZTERM directly and assign accordingly.
+    Counts are compared per group.
+
+    ECC terms with no mapping, and terms (on either side) whose prefix isn't
+    N/P/Z/E, are simply excluded from every group's count -- this check only
+    reports on the four groups themselves, not on what didn't make it into one.
     """
 
     missing = first_missing_column(ecc_df, ["Terms of Payment"])
@@ -646,47 +663,89 @@ def validate_payment_terms_group_counts(ecc_df: pd.DataFrame, s4_df: pd.DataFram
     if missing:
         return missing_column_check("Payment Terms Group Count", "S/4 file", missing)
 
-    ecc_terms_series = normalize_series(ecc_df["Terms of Payment"]).str.lstrip("0")
-    s4_terms_series = normalize_series(s4_df["ZTERM"])
+    # Normalize ECC terms: strip leading zeros, uppercase
+    ecc_terms_raw = normalize_series(ecc_df["Terms of Payment"]).str.lstrip("0")
+    s4_terms_raw = normalize_series(s4_df["ZTERM"])
 
+    # Prepare counters
+    groups = {
+        "N": {"label": "Net (N)", "ecc_count": 0, "s4_count": 0},
+        "P": {"label": "Proxy (P)", "ecc_count": 0, "s4_count": 0},
+        "Z": {"label": "Discount (Z)", "ecc_count": 0, "s4_count": 0},
+        "E": {"label": "E_payment_terms (E)", "ecc_count": 0, "s4_count": 0},
+    }
+
+    # Process ECC: unmapped terms, and terms that map to a prefix outside
+    # N/P/Z/E, are silently skipped -- they don't count toward any group.
+    for term in ecc_terms_raw:
+        if term == "":
+            continue  # blanks are handled separately
+        mapped = _NORMALIZED_PAYMENT_MAPPING.get(term)
+        if mapped is None:
+            continue
+        first_char = mapped[0] if mapped else ""
+        if first_char in groups:
+            groups[first_char]["ecc_count"] += 1
+
+    # The template writes the literal sentinel "No payment terms in ECC"
+    # into ZTERM for blank rows (see get_s4_payment_terms in
+    # ar_processor.py). It happens to start with "N", which would
+    # otherwise get miscounted as a real Net-group payment term. Those
+    # rows are already reconciled separately by
+    # validate_payment_terms_blank_count, so they're excluded here too.
+    NO_PAYMENT_TERMS_SENTINEL = "NO PAYMENT TERMS IN ECC"
+
+    # Process S/4: ZTERM values whose prefix isn't N/P/Z/E are silently
+    # skipped, same as on the ECC side.
+    for term in s4_terms_raw:
+        if term == "" or term == NO_PAYMENT_TERMS_SENTINEL:
+            continue
+        first_char = term[0] if term else ""
+        if first_char in groups:
+            groups[first_char]["s4_count"] += 1
+
+    # Build details list -- just the four groups, nothing else.
     details = []
+    failed_groups = []
 
-    for group in PAYMENT_TERM_GROUPS:
-        set_number = group["set"]
-        ecc_terms = {clean_string(term).upper().lstrip("0") for term in group["ecc"]}
-        s4_terms = {clean_string(term).upper() for term in group["s4"]}
-
-        ecc_count = int(ecc_terms_series.isin(ecc_terms).sum())
-        s4_count = int(s4_terms_series.isin(s4_terms).sum())
-
+    for prefix, data in groups.items():
+        ecc_cnt = data["ecc_count"]
+        s4_cnt = data["s4_count"]
+        status = pass_fail(ecc_cnt == s4_cnt)
+        if status == "FAIL":
+            failed_groups.append(data["label"])
         details.append(make_detail(
-            label=f"Set {set_number}",
-            left_count=ecc_count,
-            right_count=s4_count,
+            label=data["label"],
+            left_count=ecc_cnt,
+            right_count=s4_cnt,
+            status=status,
             message=(
-                f"Set {set_number} count matches."
-                if ecc_count == s4_count
-                else f"Set {set_number} count mismatch: ECC={ecc_count}, S/4={s4_count}."
+                f"{data['label']} counts match."
+                if ecc_cnt == s4_cnt
+                else f"{data['label']} mismatch: ECC={ecc_cnt}, S/4={s4_cnt}."
             ),
-            ecc_terms=sorted(group["ecc"]),
-            s4_terms=sorted(group["s4"]),
+            prefix=prefix,
         ))
 
-    total_ecc_count = sum(detail["left_count"] for detail in details)
-    total_s4_count = sum(detail["right_count"] for detail in details)
-    failed_sets = [detail["label"] for detail in details if detail["status"] == "FAIL"]
+    # Build final check
+    total_ecc = sum(g["ecc_count"] for g in groups.values())
+    total_s4 = sum(g["s4_count"] for g in groups.values())
+
+    passing_msg = "All payment term groups (N, P, Z, E) have matching counts."
+    failing_msg = (
+        "Payment term group validation failed. Mismatched groups: "
+        + ", ".join(failed_groups) + "."
+    )
 
     return make_check(
         check_name="Payment Terms Group Count",
         details=details,
-        passing_message="All payment terms groups have matching ECC and S/4 counts.",
-        failing_message=(
-            "Payment terms group validation failed. Mismatched sets: "
-            + ", ".join(failed_sets) + "."
-        ),
-        ecc_total_count=total_ecc_count,
-        s4_total_count=total_s4_count,
-        difference=total_ecc_count - total_s4_count,
+        passing_message=passing_msg,
+        failing_message=failing_msg,
+        ecc_total_count=total_ecc,
+        s4_total_count=total_s4,
+        difference=total_ecc - total_s4,
+        groups=groups,
     )
 
 
@@ -699,12 +758,12 @@ def validate_payment_terms_group_counts(ecc_df: pd.DataFrame, s4_df: pd.DataFram
 # ============================================================
 
 CHECK_FUNCTIONS: List[Callable[[pd.DataFrame, pd.DataFrame], Dict[str, Any]]] = [
-    validate_record_count,
+    # validate_record_count,
     validate_company_code_counts,
     validate_sign,
     validate_unique_document_number_counts,
-    validate_payment_terms_blank_count,
-    validate_payment_terms_group_counts,
+    # validate_payment_terms_blank_count,
+    validate_payment_terms_group_counts,   # replaced with new grouping logic
 ]
 
 

@@ -192,5 +192,22 @@ export const validateArMigration = async (eccRegistryFile, s4FilledFile) => {
     throw new Error(detail || 'AR validation failed.');
   }
 };
+export async function downloadArCurrencyDump() {
+  const response = await fetch(`${API_BASE_URL}/download-ar-currency-dump`, {
+    method: 'GET',
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}));
+    throw new Error(errorBody.detail || 'Failed to download deleted records file');
+  }
+
+  const blob = await response.blob();
+  const disposition = response.headers.get('Content-Disposition') || '';
+  const match = disposition.match(/filename="?([^"]+)"?/);
+  const filename = match ? match[1] : 'AR_Currency_Mismatch_Deleted.xlsx';
+
+  return { blob, filename };
+}
 
 export default apiClient;
