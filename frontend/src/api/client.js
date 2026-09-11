@@ -156,8 +156,13 @@ export const processCreditFile = (file) => {
 };
 
 // Process the AP registry — POST /process-ap
-export const processApFile = (file) => {
-  return postForFile('/process-ap', file, {}, 'AP_Data_Load_SIT2_filled.xlsx');
+// export const processApFile = (file) => {
+//   return postForFile('/process-ap', file, {}, 'AP_Data_Load_SIT2_filled.xlsx');
+// };
+// Process the AP registry — POST /process-ap
+export const processApFile = (file, currencyAction = null) => {
+  const extraFields = currencyAction ? { currency_action: currencyAction } : {};
+  return postForFile('/process-ap', file, extraFields, 'AP_Data_Load_SIT2_filled.xlsx');
 };
 
 // Process the AR registry — POST /process-ar
@@ -192,6 +197,99 @@ export const validateArMigration = async (eccRegistryFile, s4FilledFile) => {
     throw new Error(detail || 'AR validation failed.');
   }
 };
+
+// Data Validation tab — compares an ECC AP registry against the already-migrated S/4 output file
+export const validateApReconciliation = async (eccRegistryFile, s4FilledFile) => {
+  const formData = new FormData();
+  formData.append('registry_file', eccRegistryFile);
+  formData.append('filled_file', s4FilledFile);
+
+  try {
+    const response = await fileUploadClient.post('/validate-ap-reconciliation', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+  } catch (error) {
+    const detail = error.response?.data?.detail;
+    console.error('/validate-ap-reconciliation failed:', detail || error);
+    throw new Error(detail || 'AP validation failed.');
+  }
+};
+
+// Data Validation tab — compares an ECC Credit registry against the already-migrated S/4 output file
+export const validateCreditReconciliation = async (eccRegistryFile, s4FilledFile) => {
+  const formData = new FormData();
+  formData.append('registry_file', eccRegistryFile);
+  formData.append('filled_file', s4FilledFile);
+
+  try {
+    const response = await fileUploadClient.post('/validate-credit-reconciliation', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+  } catch (error) {
+    const detail = error.response?.data?.detail;
+    console.error('/validate-credit-reconciliation failed:', detail || error);
+    throw new Error(detail || 'Credit validation failed.');
+  }
+};
+
+// Inventory — upload ECC + S4 files, returns { session_id } used for validation
+// Router: POST /api/inventory/upload
+export const uploadInventoryFiles = async (eccFile, s4File) => {
+  const formData = new FormData();
+  formData.append('ecc_file', eccFile);
+  formData.append('s4_file', s4File);
+
+  try {
+    const response = await fileUploadClient.post('/api/inventory/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+  } catch (error) {
+    const detail = error.response?.data?.detail;
+    console.error('/api/inventory/upload failed:', detail || error);
+    throw new Error(detail || 'Inventory file upload failed.');
+  }
+};
+
+// Inventory — sample & validate common rows for a previously-uploaded session
+// Router: POST /api/inventory/validate/{session_id}?sample_size=
+export const validateInventory = async (sessionId, sampleSize = 50) => {
+  try {
+    const response = await apiClient.post(
+      `/api/inventory/validate/${sessionId}`,
+      null,
+      { params: { sample_size: sampleSize } }
+    );
+    return response.data;
+  } catch (error) {
+    const detail = error.response?.data?.detail;
+    console.error('/api/inventory/validate failed:', detail || error);
+    throw new Error(detail || 'Inventory validation failed.');
+  }
+};
+
+// Inventory — download the full comparison result for a given download_id
+// Router: GET /api/inventory/download/{download_id}
+export async function downloadInventoryResults(downloadId) {
+  const response = await fetch(`${API_BASE_URL}/api/inventory/download/${downloadId}`, {
+    method: 'GET',
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}));
+    throw new Error(errorBody.detail || 'Failed to download inventory results.');
+  }
+
+  const blob = await response.blob();
+  const disposition = response.headers.get('Content-Disposition') || '';
+  const match = disposition.match(/filename="?([^"]+)"?/);
+  const filename = match ? match[1] : 'ecc_s4_50_sample.xlsx';
+
+  return { blob, filename };
+}
+
 export async function downloadArCurrencyDump() {
   const response = await fetch(`${API_BASE_URL}/download-ar-currency-dump`, {
     method: 'GET',

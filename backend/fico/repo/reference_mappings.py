@@ -1,12 +1,22 @@
 """
-Shared reference-data lookups used by ap_processor.py and
-credit_processor.py:
+Shared reference-data lookups (repo layer). These read the static
+Excel lookup workbooks under fico/reference_data/ and hand back plain
+dicts — no business logic beyond the lookup itself lives here.
 
 1. BUT (Business Partner Identification Number) mapping — resolves a
    supplier/customer number from the registry to its S/4 Business
-   Partner number.
-2. DAP Clerk Codes mapping — resolves a customer number to its
-   Credit Rep Group / Clerk Code.
+   Partner number. Used by ap_processor.py, ar_processor.py, AND
+   credit_processor.py, each with its own id_type scope.
+
+2. DAP Clerk Codes mapping (load_credit_rep_group_mapping /
+   get_credit_rep_group) — resolves a customer number to its Credit
+   Rep Group / Clerk Code via DAP_CODES.xlsx.
+   NOT CURRENTLY CALLED FROM ANYWHERE — credit_processor.py now derives
+   the Credit Rep Group directly from the registry's own column via
+   normalize_credit_rep_group() instead of this file-based lookup.
+   Kept here (rather than deleted) in case that decision gets revisited;
+   confirm with the Credit/FICO owner before removing DAP_CODES.xlsx or
+   these two functions outright.
 """
 
 import pandas as pd

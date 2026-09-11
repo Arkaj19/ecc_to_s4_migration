@@ -8,8 +8,8 @@ import React from 'react';
 export const VALIDATION_PROCESS_OPTIONS = {
   AR: { label: 'Accounts Receivable', status: 'active', description: 'ECC vs S/4 AR migration checks' },
   ASSETS: { label: 'Assets', status: 'coming-soon', description: 'ECC vs S/4 asset migration checks' },
-  CREDIT: { label: 'Credit Management', status: 'coming-soon', description: 'ECC vs S/4 credit migration checks' },
-  AP: { label: 'Accounts Payable', status: 'coming-soon', description: 'ECC vs S/4 AP migration checks' },
+  CREDIT: { label: 'Credit Management', status: 'active', description: 'ECC vs S/4 credit migration checks' },
+  AP: { label: 'Accounts Payable', status: 'active', description: 'ECC vs S/4 AP migration checks' },
 };
 
 const ValidationProcessSelector = ({ selectedProcess, onProcessChange, disabled }) => {

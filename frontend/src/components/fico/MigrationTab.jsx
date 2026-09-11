@@ -1,16 +1,16 @@
 import React, { useState, useEffect } from 'react';
 
-import FileUpload from './FileUpload';
+import FileUpload from '../shared/FileUpload';
 import ProcessSelector, { PROCESS_OPTIONS } from './ProcessSelector';
 import DataPreview from './DataPreview';
 import MappingDisplay from './MappingDisplay';
-import StatusMessage from './StatusMessage';
+import StatusMessage from '../shared/StatusMessage';
 import ProcessButton from './ProcessButton';
-import DownloadButton from './DownloadButton';
+import DownloadButton from '../shared/DownloadButton';
 import CurrencyReviewCard from './CurrencyReviewCard';
 import StageTracker from './StageTracker';
 import ValidationReport from './ValidationReport';
-import ProcessingStatus from './ProcessingStatus'; // NEW
+import ProcessingStatus from '../shared/ProcessingStatus'; // NEW
 
 import {
   processAssetFile,
@@ -18,22 +18,28 @@ import {
   processApFile,
   processArFile,
   downloadArCurrencyDump,
-  validateAssetFile,
+  validateAssetFile,  
   validateCreditFile,
   validateApFile,
   getDefaultMappings,
-} from '../api/client';
-import { previewExcelFile } from '../utils/excelPreview';
+} from '../../api/client';
+import { previewExcelFile } from '../../utils/excelPreview';
 
 // Maps each active process type to its API calls. Add an entry here (and
 // matching exports in api/client.js) whenever a new process type flips
 // from 'coming-soon' to 'active' in ProcessSelector's PROCESS_OPTIONS.
 const PROCESS_HANDLERS = {
   ASSETS: processAssetFile,
-  CREDIT: processApFile,  // NOTE: 'CREDIT' uses processApFile? check original; kept as is.
+  CREDIT: processCreditFile,  // NOTE: 'CREDIT' uses processApFile? check original; kept as is.
   AP: processApFile,
   AR: processArFile,
 };
+
+const CURRENCY_ACTION_HANDLERS = {
+  AP: processApFile,
+  AR: processArFile,
+};
+
 
 // A process type missing from this map means "validation not implemented
 // for it yet" and must be handled as "don't claim anything" wherever this
@@ -270,21 +276,38 @@ function MigrationTab({ isConnected, connectionChecked }) {
   // AR-only: user picked KEEP or DELETE on the CurrencyReviewCard.
   // Re-submits the same file with currency_action so the backend returns
   // the actual generated workbook this time.
-  const handleCurrencyAction = async (action) => {
-    setCurrencyActionSubmitting(true);
-    setProcessError(false);
-    setStatus({ type: 'info', message: `Applying ${action}...` });
+  // const handleCurrencyAction = async (action) => {
+  //   setCurrencyActionSubmitting(true);
+  //   setProcessError(false);
+  //   setStatus({ type: 'info', message: `Applying ${action}...` });
 
-    try {
-      const result = await processArFile(file, action);
-      await handleProcessResult(result);
-    } catch (error) {
-      setProcessError(true);
-      setStatus({ type: 'error', message: 'Processing failed', details: error.message });
-    } finally {
-      setCurrencyActionSubmitting(false);
-    }
-  };
+  //   try {
+  //     const result = await processArFile(file, action);
+  //     await handleProcessResult(result);
+  //   } catch (error) {
+  //     setProcessError(true);
+  //     setStatus({ type: 'error', message: 'Processing failed', details: error.message });
+  //   } finally {
+  //     setCurrencyActionSubmitting(false);
+  //   }
+  // };
+
+  const handleCurrencyAction = async (action) => {
+  setCurrencyActionSubmitting(true);
+  setProcessError(false);
+  setStatus({ type: 'info', message: `Applying ${action}...` });
+
+  try {
+    const handler = CURRENCY_ACTION_HANDLERS[selectedProcess];
+    const result = await handler(file, action);
+    await handleProcessResult(result);
+  } catch (error) {
+    setProcessError(true);
+    setStatus({ type: 'error', message: 'Processing failed', details: error.message });
+  } finally {
+    setCurrencyActionSubmitting(false);
+  }
+};
   const [downloadingDump, setDownloadingDump] = useState(false);
 
 const handleDownloadDump = async () => {
