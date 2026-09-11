@@ -1,5 +1,5 @@
 import React from 'react';
-import { PROCESS_OPTIONS } from './ProcessSelector';
+import { PROCESS_OPTIONS } from '../fico/ProcessSelector';
 
 const APP_VERSION = '1.2.0';
 

@@ -2,31 +2,27 @@ import io
 import pandas as pd
 import openpyxl
 import datetime
-from validation_utils import extract_mandatory_fields, is_blank
-from reference_mappings import load_but_mapping, map_business_partner
-
-
-def clean_string(val):
-    """
-    Convert a value to a clean string.
-
-    Prevents values such as 1.0 from being written when the
-    source Excel contains an integer-like float.
-    """
-    if pd.isna(val) or val is None:
-        return ""
-
-    if isinstance(val, float) and val.is_integer():
-        return str(int(val))
-
-    return str(val).strip()
+from backend.fico.utils.validation_utils import extract_mandatory_fields, is_blank
+from backend.fico.repo.reference_mappings import load_but_mapping, map_business_partner
+from backend.config import BUT_REFERENCE_PATH
+from backend.fico.utils.format_utils import clean_string
 
 
 def clean_float(val, default=None):
     """
     Convert a value to float.
 
-    Blank / NaN values return the supplied default.
+    Blank / NaN values return the supplied default. Unparseable values
+    return the ORIGINAL value unchanged (not `default`) -- this is a
+    third distinct clean_float behavior alongside utils/format_utils.py's
+    clean_float() (which returns `default` on failure, used by AR) and
+    clean_float_accounting() (accounting-format-aware, used by AP/Asset).
+
+    Deliberately NOT merged into either shared variant -- the failure
+    behavior actually differs here, and collapsing it without a
+    business-owner decision could change Credit's output for any
+    unparseable cell. Flag this one to whoever owns Credit/FICO mapping
+    logic alongside the AR/AP clean_float question.
     """
     if pd.isna(val) or val is None:
         return default
@@ -78,7 +74,8 @@ def validate_credit_registry(df):
 def process_credit_registry(
     registry_file,
     template_path="templates/credit_load_template.xlsx",
-    but_path="reference_data/but0id_qs4_500.xlsx"
+    # but_path="reference_data/but0id_qs4_500.xlsx"
+    but_path=BUT_REFERENCE_PATH
 ) -> io.BytesIO:
     """
     Processes the Credit Registry spreadsheet and populates:
@@ -122,7 +119,7 @@ def process_credit_registry(
 
     # Customer Number -> Business Partner, via the BUT reference sheet,
     # scoped to the 'DAP' (customer) Identification Type — see
-    # reference_mappings.load_but_mapping() for why the id_type scoping
+    # backend.reference_mappings.load_but_mapping() for why the id_type scoping
     # matters (the same Identification Number can resolve to a different
     # Business Partner under 'DAPVEN').
     customer_but_mapping = load_but_mapping(

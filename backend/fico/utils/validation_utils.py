@@ -15,7 +15,6 @@ actually loaded, even if the template is updated later.
 
 import pandas as pd
 
-
 def extract_mandatory_fields(ws, col_to_idx):
     """
     Returns {technical_field_name: human_readable_label} for every column

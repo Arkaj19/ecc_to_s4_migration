@@ -1,20 +1,24 @@
 import React, { useState, useEffect } from 'react';
 
-import FileUpload from './FileUpload';
+import FileUpload from '../shared/FileUpload';
 import ValidationProcessSelector, { VALIDATION_PROCESS_OPTIONS } from './ValidationProcessSelector';
-import StatusMessage from './StatusMessage';
+import StatusMessage from '../shared/StatusMessage';
 import ValidationSummaryLog from './ValidationSummaryLog';
 import ValidationScoreboard from './ValidationScoreboard';
-import ProcessingStatus from './ProcessingStatus';
+import ProcessingStatus from '../shared/ProcessingStatus';
 
-import { validateArMigration } from '../api/client';
-import { previewExcelFile } from '../utils/excelPreview';
+import { validateArMigration } from '../../api/client';
+import { previewExcelFile } from '../../utils/excelPreview';
+
+import { validateApReconciliation, validateCreditReconciliation } from '../../api/client';
 
 // Maps each active validation process to its API call. Same pattern as
 // MigrationTab's PROCESS_HANDLERS — add an entry here when a process
 // flips from 'coming-soon' to 'active' in VALIDATION_PROCESS_OPTIONS.
 const VALIDATION_HANDLERS = {
   AR: validateArMigration,
+  AP: validateApReconciliation,
+  CREDIT: validateCreditReconciliation,
 };
 
 function DataValidationTab({ isConnected }) {

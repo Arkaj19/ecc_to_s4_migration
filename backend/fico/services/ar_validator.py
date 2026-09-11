@@ -1,47 +1,10 @@
-"""
-AR (Accounts Receivable) migration validator.
-
-Compares an ECC AR registry against a filled-in S/4 "Customer Open Items"
-template and runs a fixed set of reconciliation checks between them.
-
-Design notes
-------------
-Every check returns a dict of the shape::
-
-    {
-        "check_name": str,
-        "status": "PASS" | "FAIL",
-        "message": str,
-        "details": [ <detail>, ... ],   # may be empty
-        ... check-specific extra fields ...
-    }
-
-and every entry in ``details`` shares one schema::
-
-    {
-        "label": str,
-        "left_count": number | None,   # ECC side
-        "right_count": number | None,  # S/4 side
-        "status": "PASS" | "FAIL" | "MAPPING_ERROR",
-        "message": str,
-        "money": bool,                 # optional, present only when True
-        ... detail-specific extra fields ...
-    }
-
-This lets a single frontend component render every check the same way
-(see ValidationScoreboard.jsx), and lets ``validate_ar_files`` drive every
-check through the same loop instead of hand-rolled per-check wiring.
-
-Adding a 6th check means writing one ``validate_*`` function with this
-shape and adding it to ``CHECK_FUNCTIONS`` below -- nothing else changes.
-"""
-
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
 import pandas as pd
 import openpyxl
 
-import mappings
+from backend.fico.repo import mappings
+from backend.fico.utils.format_utils import clean_string, normalize_series
 
 
 # ============================================================
@@ -59,7 +22,10 @@ COMPANY_CODE_MAPPING = mappings.COMPANY_CODE_MAPPING
 # ============================================================
 # Payment Terms Mapping (ECC → S/4)
 # ============================================================
-# Each ECC payment term maps to exactly one S/4 payment term.
+# Sourced from mappings.AR_PAYMENT_TERMS_MAPPING (shared with
+# ar_processor.py) rather than a local copy -- verified identical,
+# entry for entry, before consolidating.
+#
 # The first character of the S/4 term determines the group:
 #   N → Net terms
 #   P → Proxy terms
@@ -68,49 +34,15 @@ COMPANY_CODE_MAPPING = mappings.COMPANY_CODE_MAPPING
 # No other prefixes are expected.
 # ============================================================
 
-PAYMENT_TERMS_MAPPING = {
-    "001": "P210", "003": "Z200", "004": "P215", "014": "P220", "015": "Z251",
-    "016": "Z291", "017": "Z261", "018": "Z245", "019": "Z230", "020": "Z231",
-    "021": "Z232", "022": "Z246", "023": "Z233", "024": "Z260", "025": "Z305",
-    "026": "NT12", "027": "Z160", "029": "Z262", "030": "Z276", "035": "Z290",
-    "036": "Z130", "038": "P030", "039": "P230", "040": "NT30", "041": "NT60",
-    "042": "NT90", "043": "NT45", "044": "NT75", "045": "NT15", "046": "P025",
-    "048": "NT60", "050": "Z400", "052": "Z132", "056": "Z216", "058": "Z265",
-    "059": "Z263", "060": "Z262", "061": "Z264", "062": "Z247", "063": "Z161",
-    "064": "Z330", "065": "Z146", "070": "P260", "072": "P225", "073": "Z163",
-    "075": "Z505", "091": "NTLC", "094": "Z346", "097": "Z164", "100": "Z167",
-    "107": "Z316", "109": "Z225", "111": "Z234", "112": "Z235", "114": "P190",
-    "115": "P160", "117": "P101", "118": "Z162", "119": "Z212", "122": "Z131",
-    "129": "NT10", "138": "Z165", "139": "Z176", "141": "E225", "400": "Z166",
-    "401": "NT60", "402": "NT10", "403": "NT00", "441": "NT65", "442": "NT90",
-    "443": "NT45", "444": "NT30", "445": "NT75", "33": "Z131",
-}
-
 # Build a normalized version: strip leading zeros from keys.
 _NORMALIZED_PAYMENT_MAPPING = {
-    key.lstrip("0"): value for key, value in PAYMENT_TERMS_MAPPING.items()
+    key.lstrip("0"): value for key, value in mappings.AR_PAYMENT_TERMS_MAPPING.items()
 }
 
 
 # ============================================================
 # Utility Functions
 # ============================================================
-
-def clean_string(value: Any) -> str:
-    """
-    Convert a cell value to a clean string.
-
-    Empty/NaN values become "".
-    Numeric values such as 1000.0 become "1000".
-    """
-    if value is None or pd.isna(value):
-        return ""
-
-    if isinstance(value, float) and value.is_integer():
-        return str(int(value))
-
-    return str(value).strip()
-
 
 def is_non_empty(value: Any) -> bool:
     """
@@ -131,16 +63,7 @@ def is_non_empty(value: Any) -> bool:
     return True
 
 
-def normalize_series(series: pd.Series, upper: bool = True) -> pd.Series:
-    """
-    Apply clean_string element-wise, optionally upper-casing the result.
 
-    Centralizes the `.apply(clean_string).str.upper()` pattern that
-    every count-comparison check needs before comparing ECC and S/4
-    values, so each check just declares which columns it cares about.
-    """
-    cleaned = series.apply(clean_string)
-    return cleaned.str.upper() if upper else cleaned
 
 
 # ============================================================
@@ -328,49 +251,6 @@ def read_s4_customer_open_items(filled_file) -> pd.DataFrame:
     wb.close()
 
     return pd.DataFrame(records)
-
-
-# ============================================================
-# Validation 1 (commented out - kept for reference)
-# Total Record Count
-# ============================================================
-
-# def validate_record_count(ecc_df: pd.DataFrame, s4_df: pd.DataFrame) -> Dict[str, Any]:
-#     """
-#     Compare the total number of ECC records against
-#     the total number of S/4 records.
-#     """
-#     ecc_count = len(ecc_df)
-#     s4_count = len(s4_df)
-#     difference = ecc_count - s4_count
-#     status = pass_fail(difference == 0)
-#     message = (
-#         f"Record count matches. "
-#         f"Both ECC and S/4 contain {ecc_count} records."
-#         if status == "PASS"
-#         else (
-#             f"Record count mismatch. "
-#             f"ECC contains {ecc_count} records while "
-#             f"S/4 contains {s4_count} records."
-#         )
-#     )
-#     detail = make_detail(
-#         label="Total records",
-#         left_count=ecc_count,
-#         right_count=s4_count,
-#         status=status,
-#         message=message,
-#     )
-#     return make_check(
-#         check_name="Total Record Count",
-#         details=[detail],
-#         passing_message=message,
-#         failing_message=message,
-#         ecc_count=ecc_count,
-#         s4_count=s4_count,
-#         difference=difference,
-#     )
-
 
 # ============================================================
 # Validation 2
@@ -575,59 +455,7 @@ def validate_unique_document_number_counts(ecc_df: pd.DataFrame, s4_df: pd.DataF
     )
 
 
-# # ============================================================
-# # Validation 5 (kept unchanged)
-# # Payment Terms Blank Count
-# # ============================================================
 
-# def validate_payment_terms_blank_count(ecc_df: pd.DataFrame, s4_df: pd.DataFrame) -> Dict[str, Any]:
-#     """
-#     Validate that the number of blank Terms of Payment values
-#     in the ECC registry matches the number of
-#     'No payment terms in ECC' values in S/4 ZTERM.
-#     """
-
-#     ecc_blank_count = int(
-#         ecc_df["Terms of Payment"].apply(lambda value: not is_non_empty(value)).sum()
-#     )
-
-#     s4_no_payment_terms_count = int(
-#         s4_df["ZTERM"].apply(lambda value: clean_string(value) == "No payment terms in ECC").sum()
-#     )
-
-#     status = pass_fail(ecc_blank_count == s4_no_payment_terms_count)
-
-#     message = (
-#         "Payment terms blank count matches. "
-#         f"ECC contains {ecc_blank_count} blank Terms of Payment values "
-#         f"and S/4 contains {s4_no_payment_terms_count} "
-#         "'No payment terms in ECC' values in ZTERM."
-#         if status == "PASS"
-#         else (
-#             "Payment terms blank count mismatch. "
-#             f"ECC contains {ecc_blank_count} blank Terms of Payment values "
-#             f"while S/4 contains {s4_no_payment_terms_count} "
-#             "'No payment terms in ECC' values in ZTERM."
-#         )
-#     )
-
-#     detail = make_detail(
-#         label="Blank / no payment terms",
-#         left_count=ecc_blank_count,
-#         right_count=s4_no_payment_terms_count,
-#         status=status,
-#         message=message,
-#     )
-
-#     return make_check(
-#         check_name="Payment Terms Blank Count",
-#         details=[detail],
-#         passing_message=message,
-#         failing_message=message,
-#         ecc_blank_count=ecc_blank_count,
-#         s4_no_payment_terms_count=s4_no_payment_terms_count,
-#         difference=ecc_blank_count - s4_no_payment_terms_count,
-#     )
 
 
 # ============================================================
@@ -645,7 +473,7 @@ def validate_payment_terms_group_counts(ecc_df: pd.DataFrame, s4_df: pd.DataFram
       - Discount (Z): starting with 'Z'
       - E_payment_terms (E): starting with 'E' (special group)
 
-    For each ECC row, we look up its Terms of Payment in PAYMENT_TERMS_MAPPING,
+    For each ECC row, we look up its Terms of Payment in mappings.AR_PAYMENT_TERMS_MAPPING,
     take the first character of the mapped S/4 term, and assign to one of the four groups.
     For each S/4 row, we take the first character of ZTERM directly and assign accordingly.
     Counts are compared per group.

@@ -5,9 +5,16 @@ import pandas as pd
 import openpyxl
 from openpyxl.utils.dataframe import dataframe_to_rows
 import datetime
-import mappings
-from validation_utils import extract_mandatory_fields, is_blank
+from backend.fico.repo import mappings
+from backend.fico.utils.validation_utils import extract_mandatory_fields, is_blank
 from openpyxl.styles import PatternFill
+from backend.fico.utils.format_utils import (
+    clean_string,
+    clean_int,
+    clean_date,
+    clean_float_accounting as clean_float,  # Asset needs the accounting-format-aware
+                                             # variant, same as ap_processor.py.
+)
 
 # Fill used to flag any row that has a blank mandatory field, so it's
 # visually obvious in the generated workbook which rows still need
@@ -15,58 +22,6 @@ from openpyxl.styles import PatternFill
 MISSING_MANDATORY_FILL = PatternFill(
     start_color="FFFF0000", end_color="FFFF0000", fill_type="solid"
 )
-
-
-def clean_string(val):
-    if pd.isna(val) or val is None:
-        return ""
-
-    if isinstance(val, float) and val.is_integer():
-        return str(int(val))
-
-    return str(val).strip()
-
-
-def clean_int(val, default=""):
-    if pd.isna(val) or val is None:
-        return default
-    try:
-        return int(float(val))
-    except (ValueError, TypeError):
-        return str(val).strip()
-
-
-def clean_float(val, default=None):
-    """
-    Convert a value to float, including SAP/Excel "accounting format"
-    text such as "5,114.43-" or "(5,114.43)" for negative numbers.
-    """
-    if pd.isna(val) or val is None:
-        return default
-
-    if isinstance(val, (int, float)):
-        return float(val)
-
-    text = str(val).strip()
-    if not text:
-        return default
-
-    negative = False
-
-    if text.endswith('-'):
-        negative = True
-        text = text[:-1].strip()
-    elif text.startswith('(') and text.endswith(')'):
-        negative = True
-        text = text[1:-1].strip()
-
-    text = text.replace(',', '')
-
-    try:
-        num = float(text)
-        return -num if negative else num
-    except (ValueError, TypeError):
-        return val
 
 
 class RegistryMismatchError(ValueError):
@@ -135,23 +90,6 @@ def read_asset_sheets(registry_file):
 
     combined = pd.concat(matched_frames, ignore_index=True)
     return combined, skipped_sheets
-
-
-def clean_date(val):
-    if pd.isna(val) or val is None:
-        return None
-    if isinstance(val, (datetime.date, datetime.datetime)):
-        return val.date() if isinstance(val, datetime.datetime) else val
-    val_str = str(val).strip()
-    if val_str == "00/00/0000" or val_str == "00.00.0000" or val_str == "" or val_str == "NaT":
-        return None
-
-    for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d', '%m/%d/%Y', '%d/%m/%Y', '%d.%m.%Y', '%Y%m%d'):
-        try:
-            return datetime.datetime.strptime(val_str, fmt).date()
-        except ValueError:
-            continue
-    return val
 
 
 def process_asset_registry(

@@ -1,10 +1,10 @@
 import React, { useCallback, useRef, useState } from 'react';
-import { formatFileSize } from '../utils/helpers';
+import { formatFileSize } from '../../utils/helpers';
 
-const ACCEPTED_EXTENSIONS = ['.xlsx', '.xls'];
+const DEFAULT_EXTENSIONS = ['.xlsx', '.xls'];
 
-const isAcceptedFile = (filename) =>
-  ACCEPTED_EXTENSIONS.some((ext) => filename.toLowerCase().endsWith(ext));
+const isAcceptedFile = (filename, acceptedExtensions) =>
+  acceptedExtensions.some((ext) => filename.toLowerCase().endsWith(ext));
 
 /**
  * FileUpload — pure, controlled file picker.
@@ -15,34 +15,58 @@ const isAcceptedFile = (filename) =>
  * that all lives in App.jsx via api/client.js, so there's exactly one place
  * that talks to the backend.
  */
-const FileUpload = ({ onFileUpload, file, disabled, title = 'Upload Registry File', dropText = 'your registry file' }) => {
+const FileUpload = ({
+  onFileUpload,
+  file,
+  disabled,
+  title = 'Upload Registry File',
+  dropText = 'your registry file',
+  // ---- new props, all optional with sensible defaults ----
+  acceptedExtensions = DEFAULT_EXTENSIONS,
+  supportedHint,               // if omitted, auto-derived from acceptedExtensions
+}) => {
   const inputRef = useRef(null);
   const [isDragActive, setIsDragActive] = useState(false);
   const [rejection, setRejection] = useState(null);
 
+  // Human-readable list, e.g. ".xlsx, .xls" or ".csv, .xlsx, .xls"
+  const extensionList = acceptedExtensions.join(', ');
+  const acceptAttr = acceptedExtensions.join(',');
+  const hint = supportedHint ?? `Supports ${extensionList} files`;
+
   const selectFile = useCallback((selected) => {
     if (!selected) return;
-    if (!isAcceptedFile(selected.name)) {
-      setRejection(`"${selected.name}" isn't a .xlsx or .xls file.`);
+    if (!isAcceptedFile(selected.name, acceptedExtensions)) {
+      setRejection(`"${selected.name}" isn't one of: ${extensionList}.`);
       return;
     }
     setRejection(null);
     onFileUpload(selected);
-  }, [onFileUpload]);
+  }, [onFileUpload, acceptedExtensions, extensionList]);
 
-  const handleDrop = useCallback((e) => {
-    e.preventDefault();
-    setIsDragActive(false);
-    if (disabled) return;
-    selectFile(e.dataTransfer.files?.[0]);
-  }, [disabled, selectFile]);
+ 
+  // (handleDrop, handleRemove, the JSX below)
+    const handleDrop = useCallback(
+    (e) => {
+      e.preventDefault();
+      setIsDragActive(false);
 
-  const handleRemove = () => {
-    setRejection(null);
-    onFileUpload(null);
-    if (inputRef.current) inputRef.current.value = '';
-  };
+      if (disabled) return;
 
+      const dropped = e.dataTransfer?.files?.[0];
+      if (dropped) selectFile(dropped);
+    },
+    [disabled, selectFile]
+  );
+
+  const handleRemove = useCallback(
+    (e) => {
+      e?.stopPropagation?.();
+      setRejection(null);
+      onFileUpload(null);
+    },
+    [onFileUpload]
+  );
   return (
     <div className="card">
       <div className="flex items-center justify-between mb-4">
@@ -57,9 +81,13 @@ const FileUpload = ({ onFileUpload, file, disabled, title = 'Upload Registry Fil
       <input
         ref={inputRef}
         type="file"
-        accept=".xlsx,.xls"
+        accept={acceptAttr}                       
         disabled={disabled}
-        onChange={(e) => selectFile(e.target.files?.[0])}
+        onChange={(e) => {
+          const picked = e.target.files?.[0];
+          selectFile(picked);
+          e.target.value = '';  
+        }}
         className="hidden"
       />
 
@@ -111,7 +139,7 @@ const FileUpload = ({ onFileUpload, file, disabled, title = 'Upload Registry Fil
             <p className="text-sm text-gray-600">
               {isDragActive ? 'Drop your file here...' : `Drag & drop ${dropText}, or click to browse`}
             </p>
-            <p className="text-xs text-gray-400 mt-2">Supports .xlsx and .xls files</p>
+            <p className="text-xs text-gray-400 mt-2">{hint}</p>   {/* ← was hardcoded */}
           </div>
         )}
       </div>

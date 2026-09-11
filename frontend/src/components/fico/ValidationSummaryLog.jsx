@@ -18,9 +18,14 @@ export const buildRawFindings = (result) => {
   lines.push('');
   result.checks.forEach((check, i) => {
     lines.push(`${i + 1}. [${check.status}] ${check.check_name}: ${check.message}`);
+    // (check.details || []).forEach((d) => {
+    //   if (d.status !== 'PASS') {
+    //     lines.push(`   - ${d.ecc_code}: ${d.message}`);
+    //   }
+    // });
     (check.details || []).forEach((d) => {
       if (d.status !== 'PASS') {
-        lines.push(`   - ${d.ecc_code}: ${d.message}`);
+        lines.push(`   - ${d.label}: ${d.message}`);
       }
     });
   });

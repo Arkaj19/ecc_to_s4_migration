@@ -3,205 +3,21 @@ import datetime
 
 import pandas as pd
 import openpyxl
+from openpyxl.styles import PatternFill
 
-import mappings
-from validation_utils import extract_mandatory_fields, is_blank
-from reference_mappings import load_but_mapping, map_business_partner
-
-
-# ============================================================
-# Common Cleaning Functions
-# ============================================================
-
-def clean_string(val):
-    """
-    Convert a value to a clean string.
-
-    Prevents values such as 5304994.0 from being written
-    when the Excel source contains an integer-like float.
-    """
-    if pd.isna(val) or val is None:
-        return ""
-
-    if isinstance(val, float) and val.is_integer():
-        return str(int(val))
-
-    return str(val).strip()
-
-
-def clean_int(val, default=""):
-    """
-    Convert a value to an integer.
-
-    Blank / NaN values return the supplied default.
-    """
-    if pd.isna(val) or val is None:
-        return default
-
-    try:
-        return int(float(val))
-    except (ValueError, TypeError):
-        return str(val).strip()
-
-
-def clean_float(val, default=None):
-    """
-    Convert a value to float, including SAP/Excel "accounting format"
-    text such as "5,114.43-" or "(5,114.43)" for negative numbers.
-
-    Registry exports commonly render negatives with a trailing minus
-    sign and/or thousands separators rather than a leading minus.
-    Python's float() can't parse either of those directly, so without
-    this such values fall through unchanged as literal text (with the
-    trailing minus baked in) instead of becoming the real negative
-    number -5114.43 — which matters here since apply_debit_credit_sign()
-    below relies on being handed an already-parsed float.
-    """
-    if pd.isna(val) or val is None:
-        return default
-
-    if isinstance(val, (int, float)):
-        return float(val)
-
-    text = str(val).strip()
-    if not text:
-        return default
-
-    negative = False
-
-    if text.endswith('-'):
-        negative = True
-        text = text[:-1].strip()
-    elif text.startswith('(') and text.endswith(')'):
-        negative = True
-        text = text[1:-1].strip()
-
-    text = text.replace(',', '')
-
-    try:
-        num = float(text)
-        return -num if negative else num
-    except (ValueError, TypeError):
-        return val
-
-
-def clean_date(val):
-    """
-    Convert Excel/date values into Python date objects.
-    """
-
-    if pd.isna(val) or val is None:
-        return None
-
-    if isinstance(val, (datetime.date, datetime.datetime)):
-        return (
-            val.date()
-            if isinstance(val, datetime.datetime)
-            else val
-        )
-
-    val_str = str(val).strip()
-
-    if val_str in (
-        "",
-        "00/00/0000",
-        "00.00.0000",
-        "NaT"
-    ):
-        return None
-
-    date_formats = (
-        "%Y-%m-%d %H:%M:%S",
-        "%Y-%m-%d",
-        "%m/%d/%Y",
-        "%d/%m/%Y",
-        "%d.%m.%Y",
-        "%Y%m%d",
-    )
-
-    for fmt in date_formats:
-        try:
-            return datetime.datetime.strptime(
-                val_str,
-                fmt
-            ).date()
-        except ValueError:
-            continue
-
-    return val
-
-
-# ============================================================
-# AP Payment Terms Mapping
-# ECC -> S/4
-# ============================================================
-
-PAYMENT_TERMS_MAPPING = {
-    "O": "NT30",
-    "A": "NT00",
-    "B": "NT10",
-    "H": "NT15",
-    "T": "NT60",
-    "C": "Z130",
-    "L": "NT20",
-    "YY": "NT90",
-    "R": "NT45",
-    "S": "NT50",
-    "NF5": "Z514",
-    "D": "Z221",
-    "ZZ": "N100",
-    "I": "Z229",
-    "N120": "N120",
-    "M": "Z120",
-    "EE": "Z167",
-    "BB": "Z103",
-    "G": "Z162",
-    "NF7": "NT07",
-    "HI": "Z101",
-    "U": "Z053",
-    "N110": "N110",
-    "TT": "NT75",
-    "Y": "NT55",
-    "V": "Z233",
-    "Q": "NT40",
-    "X": "Z247",
-    "WX": "Z163",
-    "N115": "N115",
-    "Z": "Z132",
-    "J": "P215",
-    "E10": "P210",
-    "E": "P010",
-    "FF": "Z145",
-    "N125": "N125",
-    "N65": "NT65",
-    "T70": "NT70",
-    "NF4": "Z333",
-    "N135": "N135",
-    "AA": "Z261",
-    "CC": "Z147",
-    "W": "Z263",
-    "DD": "Z100",
-    "F": "P231",
-    "XX": "Z190",
-    "N": "Z223",
-    "OO": "NT38",
-}
-
-
-def get_s4_payment_terms(ecc_payment_term):
-    """
-    Look up S/4 Payment Terms from ECC Payment Terms.
-    """
-
-    if not ecc_payment_term or pd.isna(ecc_payment_term):
-        return ""
-
-    payment_term = str(ecc_payment_term).strip().upper()
-
-    return PAYMENT_TERMS_MAPPING.get(
-        payment_term,
-        payment_term
-    )
+from backend.fico.repo import mappings
+from backend.config import BUT_REFERENCE_PATH
+from backend.fico.utils.validation_utils import extract_mandatory_fields, is_blank
+from backend.fico.repo.reference_mappings import load_but_mapping, map_business_partner
+from backend.fico.utils.format_utils import (
+    clean_string,
+    clean_int,
+    clean_date,
+    clean_float_accounting as clean_float,  # AP needs the accounting-format-aware
+                                             # variant (handles "5,114.43-" style
+                                             # negatives) -- see utils/format_utils.py
+                                             # for why this isn't just `clean_float`.
+)
 
 
 # ============================================================
@@ -255,6 +71,109 @@ def get_s4_tax_code(ecc_company_code, s4_company_code):
         return "I0"
 
     return ""
+
+
+# ============================================================
+# Company Code <-> Currency sanity check
+#
+# S/4 company code 1200 (Canada) should only ever carry CAD, and 1000
+# (US) should only ever carry USD. A row with the "wrong" currency for
+# its company code most likely points at a mis-tagged registry entry,
+# so these combinations are flagged for the user to review rather than
+# silently migrated. Mirrors the equivalent check in ar_processor.py.
+# ============================================================
+
+INVALID_CURRENCY_FOR_COMPANY_CODE = {
+    "1200": "USD",
+    "1000": "CAD",
+}
+
+CURRENCY_MISMATCH_HIGHLIGHT_FILL = PatternFill(
+    start_color="FFC7CE",
+    end_color="FFC7CE",
+    fill_type="solid",
+)
+
+
+def is_currency_mismatch(s4_company_code, currency):
+    s4_company_code = clean_string(s4_company_code)
+    currency = clean_string(currency).upper()
+    return INVALID_CURRENCY_FOR_COMPANY_CODE.get(s4_company_code) == currency
+
+
+class CurrencyReviewRequiredError(Exception):
+    """
+    Raised when the AP registry contains company-code / currency
+    combinations that need an explicit user decision (keep or delete)
+    before the file can be migrated. Callers should surface
+    `review_payload` to the user and re-invoke `process_ap_registry`
+    with the chosen `currency_action` ("KEEP" or "DELETE") once the
+    user has decided.
+    """
+
+    def __init__(self, review_payload):
+        self.review_payload = review_payload
+        super().__init__(
+            "Company code / currency mismatches require user review "
+            "before the AP registry can be processed."
+        )
+
+
+def find_currency_mismatches(df):
+    """
+    Scans the raw registry dataframe for rows whose S/4 company code
+    does not match an allowed currency (1200 -> CAD only, 1000 -> USD
+    only) and returns a list of mismatch details, one per offending row.
+    """
+    mismatches = []
+
+    for idx, source_row in df.iterrows():
+        ecc_company_code = clean_string(source_row.get("Company Code"))
+        s4_company_code = get_s4_company_code(ecc_company_code)
+        currency = clean_string(source_row.get("Currency")).upper()
+
+        if is_currency_mismatch(s4_company_code, currency):
+            mismatches.append({
+                # +2 accounts for the 1-based Excel row and the header row
+                "row": int(idx) + 2,
+                "company_code": ecc_company_code,
+                "s4_company_code": s4_company_code,
+                "currency": currency,
+                "supplier": clean_string(source_row.get("Supplier")),
+                "reference": clean_string(source_row.get("Reference")),
+                "document_number": clean_string(
+                    source_row.get("Document Number")
+                ),
+                "amount": clean_float(source_row.get("Amount")),
+            })
+
+    return mismatches
+
+
+def build_currency_mismatch_dump(df, mismatch_row_indices):
+    """
+    Builds a standalone workbook containing only the raw registry rows
+    that were flagged for a company code / currency mismatch and then
+    deleted, so the user has a record of what was removed.
+    """
+    dump_df = df.loc[sorted(mismatch_row_indices)]
+
+    dump_wb = openpyxl.Workbook()
+    dump_ws = dump_wb.active
+    dump_ws.title = "Deleted - Currency Mismatch"
+
+    dump_ws.append(list(dump_df.columns))
+    for _, row in dump_df.iterrows():
+        dump_ws.append([
+            clean_string(value) if isinstance(value, float) and pd.isna(value)
+            else value
+            for value in row.tolist()
+        ])
+
+    dump_buffer = io.BytesIO()
+    dump_wb.save(dump_buffer)
+    dump_buffer.seek(0)
+    return dump_buffer
 
 
 # ============================================================
@@ -510,96 +429,13 @@ def read_ap_registry(registry_file):
 def process_ap_registry(
     registry_file,
     template_path="templates/AP Data Load Sheet - SIT2.xlsx",
-    but_path="reference_data/but0id_qs4_500.xlsx"
+    but_path=BUT_REFERENCE_PATH,
+    currency_action=None
 ) -> io.BytesIO:
-    """
-    Processes the AP Registry Excel file and populates:
-
-        1. Vendor Open Items
-        2. Withholding Tax Items
-
-    ============================================================
-    VENDOR OPEN ITEMS
-    ============================================================
-
-    BUKRS       <- Company Code -> ECC to S/4 mapping
-    XBLNR       <- Reference
-    DOCLN       <- Blank
-    LIFNR       <- Supplier
-    GKONT       <- 9999900000
-    BLART       <- UE
-    BLDAT       <- Document Date
-    SGTXT       <- Text
-    WAERS       <- Currency
-    WRBTR       <- Amount
-    DMBTR       <- Amt.in loc.cur.
-    DMBE2       <- LC2 Amount
-    DMBE3       <- LC3 Amount
-    MWSKZ       <- Company Code based tax mapping
-    ZTERM       <- Terms of Payment -> ECC to S/4 mapping
-    ZFBDT       <- Baseline Payment Dte
-    ZLSCH       <- Payment Method
-    ZLSPR       <- Payment Block
-    ZBD1T       <- Days 1
-    ZBD1P       <- Disc.percent 1
-    ZBD2T       <- Days 2
-    ZBD2P       <- Disc.percent 2
-    ZBD3T       <- Days Net
-    SKFBT       <- Discount base
-    DTWS1       <- Instruction 1
-    DTWS2       <- Instruction 2
-    DTWS3       <- Instruction 3
-    DTWS4       <- Instruction 4
-    XREF1       <- Reference Key 1
-
-    All other Vendor Open Items fields remain blank.
-
-
-    ============================================================
-    WITHHOLDING TAX ITEMS
-    ============================================================
-
-    BUKRS       <- Company Code -> ECC to S/4 mapping
-    XBLNR       <- Reference
-    DOCLN       <- Blank
-    LIFNR       <- Supplier
-    WT_TYPE     <- Blank
-    WT_CODE     <- Blank
-    BAS_AMT_TC  <- Blank
-    MAN_AMT_TC  <- Blank
-
-    All other Withholding Tax Items fields remain blank.
-
-    Data is written starting from Row 9.
-    Technical field identifiers are read from Row 5.
-    """
-
-    # ---------------------------------------------------------
-    # 1. Read AP Registry
-    # ---------------------------------------------------------
-
-    # Detects whether the human-readable labels are on Row 1 or Row 2 of
-    # this particular export and reads with the correct header row — see
-    # read_ap_registry() docstring for why this matters.
+  
     df_raw = read_ap_registry(
         registry_file
     )
-
-    # ---------------------------------------------------------
-    # 2. Remove accidental/header row if present
-    #
-    # The uploaded AP Registry contains a first data row
-    # containing technical field names such as:
-    #
-    # Company Code = BUKRS
-    # Supplier = LIFNR
-    # Reference = XBLNR
-    #
-    # This must not become an actual migration record. Only relevant when
-    # the technical-code row landed on Row 1 (i.e. it became Row 2 of
-    # the data) — if it was already excluded as the header itself
-    # (Row 2-as-header case), there's nothing to strip here.
-    # ---------------------------------------------------------
 
     if "Company Code" in df_raw.columns:
 
@@ -612,6 +448,29 @@ def process_ap_registry(
         ].copy()
 
     # ---------------------------------------------------------
+    # 2b. Company code / currency sanity check
+    # ---------------------------------------------------------
+
+    currency_mismatches = find_currency_mismatches(df_raw)
+    mismatch_row_indices = {
+        mismatch["row"] - 2 for mismatch in currency_mismatches
+    }
+
+    if currency_mismatches and currency_action is None:
+        raise CurrencyReviewRequiredError({
+            "status": "review_required",
+            "action": None,
+            "mismatch_count": len(currency_mismatches),
+            "mismatches": currency_mismatches,
+        })
+
+    if currency_action not in (None, "KEEP", "DELETE"):
+        raise ValueError(
+            f"Unrecognized currency_action: {currency_action!r}. "
+            "Expected 'KEEP' or 'DELETE'."
+        )
+
+    # ---------------------------------------------------------
     # 3. Load AP Data Load template
     # ---------------------------------------------------------
 
@@ -619,11 +478,6 @@ def process_ap_registry(
         template_path
     )
 
-    # Supplier -> Business Partner, via the BUT reference sheet, scoped
-    # to the 'DAPVEN' (vendor) Identification Type. Built once and reused
-    # for both Vendor Open Items and Withholding Tax Items below — see
-    # reference_mappings.load_but_mapping() for why the id_type scoping
-    # matters.
     vendor_but_mapping = load_but_mapping(
         but_path,
         id_type="DAP"
@@ -713,6 +567,10 @@ def process_ap_registry(
         # ECC Company Code -> S/4 Company Code
         # -----------------------------------------------------
 
+        if currency_action == "DELETE" and idx in mismatch_row_indices:
+            continue
+
+
         ecc_company_code = clean_string(
             row_data.get("Company Code")
         )
@@ -738,7 +596,7 @@ def process_ap_registry(
         # Payment Terms ECC -> S/4
         # -----------------------------------------------------
 
-        s4_payment_terms = get_s4_payment_terms(
+        s4_payment_terms = mappings.get_s4_ap_payment_terms(
             row_data.get("Terms of Payment")
         )
 
@@ -977,6 +835,17 @@ def process_ap_registry(
                     value=value
                 )
 
+        # ---------------------------------------------------------
+        # Highlight rows kept despite a company code / currency
+        # mismatch so they're easy to spot for manual review.
+        # ---------------------------------------------------------
+
+        if currency_action == "KEEP" and idx in mismatch_row_indices:
+            for col in range(1, ws_vendor.max_column + 1):
+                ws_vendor.cell(row=current_row, column=col).fill = (
+                    CURRENCY_MISMATCH_HIGHLIGHT_FILL
+                )
+
         current_row += 1
 
     # =========================================================
@@ -1009,6 +878,9 @@ def process_ap_registry(
     current_row = 9
 
     for idx, row_data in df_raw.iterrows():
+
+        if currency_action == "DELETE" and idx in mismatch_row_indices:
+            continue
 
         # -----------------------------------------------------
         # ECC Company Code -> S/4 Company Code
@@ -1098,6 +970,13 @@ def process_ap_registry(
                     value=value
                 )
 
+        if currency_action == "KEEP" and idx in mismatch_row_indices:
+            for col in range(1, ws_withholding.max_column + 1):
+                ws_withholding.cell(row=current_row, column=col).fill = (
+                    CURRENCY_MISMATCH_HIGHLIGHT_FILL
+                )
+
+
         current_row += 1
 
     # =========================================================
@@ -1106,10 +985,28 @@ def process_ap_registry(
 
     out_buf = io.BytesIO()
 
-    wb.save(
+    wb.save(    
         out_buf
     )
 
     out_buf.seek(0)
+
+    if currency_mismatches:
+        dump_rows = len(mismatch_row_indices) if currency_action == "DELETE" else 0
+        currency_review = {
+            "status": "kept" if currency_action == "KEEP" else "deleted",
+            "action": currency_action,
+            "mismatch_count": len(currency_mismatches),
+            "dump_rows": dump_rows,
+            "retained_rows": len(df_raw) - dump_rows,
+            "mismatches": currency_mismatches,
+        }
+
+        if currency_action == "DELETE":
+            currency_review["dump_buffer"] = build_currency_mismatch_dump(
+                df_raw, mismatch_row_indices
+            )
+
+        out_buf.currency_review = currency_review
 
     return out_buf, validation_errors
