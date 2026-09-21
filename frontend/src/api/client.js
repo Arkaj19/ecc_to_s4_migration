@@ -85,6 +85,9 @@ const postForFile = async (endpoint, file, extraFields = {}, fallbackFilename = 
       mismatchCount: parseInt(response.headers['x-currency-mismatch-count'] || '0', 10),
       dumpRows: parseInt(response.headers['x-currency-dump-rows'] || '0', 10),
       retainedRows: parseInt(response.headers['x-currency-retained-rows'] || '0', 10),
+      // Added: needed by downloadArCurrencyDump(downloadId) below — was
+      // missing entirely, so the download-dump button had no id to send.
+      dumpDownloadId: response.headers['x-currency-dump-download-id'] || null,
     };
 
     return {
@@ -155,10 +158,6 @@ export const processCreditFile = (file) => {
   return postForFile('/process-credit', file, {}, 'credit_data_load_filled.xlsx');
 };
 
-// Process the AP registry — POST /process-ap
-// export const processApFile = (file) => {
-//   return postForFile('/process-ap', file, {}, 'AP_Data_Load_SIT2_filled.xlsx');
-// };
 // Process the AP registry — POST /process-ap
 export const processApFile = (file, currencyAction = null) => {
   const extraFields = currencyAction ? { currency_action: currencyAction } : {};
@@ -290,8 +289,12 @@ export async function downloadInventoryResults(downloadId) {
   return { blob, filename };
 }
 
-export async function downloadArCurrencyDump() {
-  const response = await fetch(`${API_BASE_URL}/download-ar-currency-dump`, {
+export async function downloadArCurrencyDump(downloadId) {
+  if (!downloadId) {
+    throw new Error('No download id available for the currency mismatch dump.');
+  }
+
+  const response = await fetch(`${API_BASE_URL}/download-ar-currency-dump/${downloadId}`, {
     method: 'GET',
   });
 

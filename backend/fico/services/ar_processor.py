@@ -32,6 +32,14 @@ INVALID_CURRENCY_FOR_COMPANY_CODE = {
     "1000": "CAD",
 }
 
+# The other side of the same mapping -- what each company code SHOULD
+# carry -- surfaced to the frontend so the review table can show
+# "Expected" next to the offending "Currency" value.
+EXPECTED_CURRENCY_FOR_COMPANY_CODE = {
+    "1200": "CAD",
+    "1000": "USD",
+}
+
 CURRENCY_MISMATCH_HIGHLIGHT_FILL = PatternFill(
     start_color="FFC7CE",
     end_color="FFC7CE",
@@ -51,7 +59,7 @@ class CurrencyReviewRequiredError(Exception):
     combinations that need an explicit user decision (keep or delete)
     before the file can be migrated. Callers should surface
     `review_payload` to the user and re-invoke `process_ar_registry`
-    with the chosen `currency_action` ("keep" or "delete") once the
+    with the chosen `currency_action` ("KEEP" or "DELETE") once the
     user has decided.
     """
 
@@ -83,6 +91,7 @@ def find_currency_mismatches(df):
                 "company_code": ecc_company_code,
                 "s4_company_code": s4_company_code,
                 "currency": currency,
+                "expected_currency": EXPECTED_CURRENCY_FOR_COMPANY_CODE.get(s4_company_code),
                 "customer": clean_string(source_row.get("Customer")),
                 "document_number": clean_string(
                     source_row.get("Document Number")
@@ -180,11 +189,6 @@ def get_document_type_mappings(
     # RV:
     # Assignment -> Reference Document Number
     # Reference  -> Assignment Number
-    # if document_type == "RV":
-    #     return {
-    #         "reference_document_number": assignment,
-    #         "assignment": reference,
-    #     }
     if document_type == "RV":
         return {
             "reference_document_number": assignment if assignment else "No reference in ECC",
@@ -239,8 +243,6 @@ REQUIRED_AR_COLUMNS = [
 ]
 
 
-
-
 def process_ar_registry(
     registry_file,
     template_path="templates/Merged File all DOC Types.xlsx",
@@ -257,11 +259,13 @@ def process_ar_registry(
         A CurrencyReviewRequiredError is raised instead, carrying a
         `review_payload` the caller can present to the user with a
         keep/delete choice.
-      - "keep": mismatched rows are migrated as normal, but highlighted
+      - "KEEP": mismatched rows are migrated as normal, but highlighted
         in red in the output workbook.
-      - "delete": mismatched rows are excluded from the output workbook
+      - "DELETE": mismatched rows are excluded from the output workbook
         and instead written to a separate "dump" workbook, returned via
         `output.currency_review["dump_buffer"]`.
+
+    Accepts "keep"/"delete" in any case -- normalized to upper below.
     """
     df = pd.read_excel(registry_file)
 
@@ -277,6 +281,18 @@ def process_ar_registry(
         raise RegistryMismatchError(
             "The uploaded file does not contain the required AR "
             f"column(s): {', '.join(missing_columns)}."
+        )
+
+    # Normalize once, here, so every comparison below (and the
+    # dump-branch, and the status string) can rely on it being
+    # exactly None, "KEEP", or "DELETE" -- no more case mismatches.
+    if currency_action is not None:
+        currency_action = currency_action.strip().upper()
+
+    if currency_action not in (None, "KEEP", "DELETE"):
+        raise ValueError(
+            f"Unrecognized currency_action: {currency_action!r}. "
+            "Expected 'KEEP' or 'DELETE'."
         )
 
     # ---------------------------------------------------------
@@ -296,12 +312,6 @@ def process_ar_registry(
             "mismatches": currency_mismatches,
         })
 
-    if currency_action not in (None, "KEEP", "DELETE"):
-        raise ValueError(
-            f"Unrecognized currency_action: {currency_action!r}. "
-            "Expected 'KEEP' or 'DELETE'."
-        )
-
     # ---------------------------------------------------------
     # Customer -> Business Partner mapping
     # ---------------------------------------------------------
@@ -313,28 +323,19 @@ def process_ar_registry(
 
     wb = openpyxl.load_workbook(template_path)
 
-    # Prefer a customer open-item sheet if the template contains one.
     if "Customer Open Items" in wb.sheetnames:
         ws = wb["Customer Open Items"]
     else:
         ws = wb[wb.sheetnames[0]]
 
-    # Technical target field identifiers are normally stored in Row 5.
     technical_columns = {}
     for col in range(1, ws.max_column + 1):
         value = clean_string(ws.cell(row=5, column=col).value)
         if value:
             technical_columns[value] = col
 
-    # ---------------------------------------------------------
-    # Reason Code
-    # Fixed target column in the AR template
-    # BL = Column 64
-    # ---------------------------------------------------------
-
     reason_code_column = 64
 
-    # Fallback: some templates have technical headers in Row 1.
     if not technical_columns:
         for col in range(1, ws.max_column + 1):
             value = clean_string(ws.cell(row=1, column=col).value)
@@ -343,26 +344,14 @@ def process_ar_registry(
 
     data_start_row = 9
 
-    # Clear existing example data (preserve formatting)
     for row in range(data_start_row, ws.max_row + 1):
         for col in range(1, ws.max_column + 1):
             ws.cell(row=row, column=col).value = None
 
-    # # Create a new sheet for Canada data, copying the header and formatting
-    # canada_ws = copy_sheet_headers_and_formatting(ws, wb, "Canada Open Items")
-    
-    # # Clear any existing data rows in the Canada sheet
-    # for row in range(data_start_row, canada_ws.max_row + 1):
-    #     for col in range(1, canada_ws.max_column + 1):
-    #         canada_ws.cell(row=row, column=col).value = None
-
     current_row = data_start_row
-    validation_errors = []   # list of dicts: sheet, row, field_label
+    validation_errors = []
 
     for idx, source_row in df.iterrows():
-        # Rows flagged as a company code / currency mismatch and marked
-        # for deletion are excluded from the migration output entirely —
-        # they'll be captured in the separate dump workbook below.
         if currency_action == "DELETE" and idx in mismatch_row_indices:
             continue
 
@@ -393,7 +382,6 @@ def process_ar_registry(
         else:
             tax_code = ""
 
-        # Get the document number from the registry (Column I) to map to XREF1
         document_number = clean_string(source_row.get("Document Number"))
 
         mapped_values = {
@@ -403,8 +391,8 @@ def process_ar_registry(
                     customer_but_mapping,
                     source_row.get("Customer")
                 ),
-            "GKONT": "9999900000",          # hardcoded clearing account
-            "BLART": "UE",                  # target document type fixed
+            "GKONT": "9999900000",
+            "BLART": "UE",
             "BLDAT": clean_date(source_row.get("Document Date")),
             "SGTXT": clean_string(source_row.get("Text")),
             "WAERS": clean_string(source_row.get("Currency")),
@@ -419,20 +407,16 @@ def process_ar_registry(
             "ZBD2T": clean_string(source_row.get("Days 2")),
             "ZBD2P": clean_float(source_row.get("Disc.percent 2")),
             "ZBD3T": clean_string(source_row.get("Days Net")),
-            # "SKFBT": clean_float(source_row.get("Discount base")),
             "SKFBT": normalize_amount(
                         source_row.get("Discount base"),
                         source_row.get("Debit/Credit Ind.")
                     ),
-            # "KKBER": clean_string(source_row.get("Credit Control Area")),
             "KKBER": s4_company_code,
             "ZUONR": doc_type_mappings["assignment"],
             "RSTGR": get_reason_code(source_row.get("Reason code")),
-            # Map the document number from the source to XREF1 (Reference Key 1)
             "XREF1": document_number,
         }
 
-        # Write values to the main Customer Open Items sheet (all data)
         for tech_field, value in mapped_values.items():
             if tech_field in technical_columns:
                 ws.cell(
@@ -440,12 +424,6 @@ def process_ar_registry(
                     column=technical_columns[tech_field],
                     value=value,
                 )
-
-        # ---------------------------------------------------------
-        # Reason Code
-        # Source: Reason code
-        # Target: BL (Column 64)
-        # ---------------------------------------------------------
 
         reason_code = get_reason_code(
             source_row.get("Reason code")
@@ -457,18 +435,15 @@ def process_ar_registry(
             value=reason_code,
         )
 
-        # ---------------------------------------------------------
-        # Highlight rows kept despite a company code / currency
-        # mismatch so they're easy to spot for manual review.
-        # ---------------------------------------------------------
-
-        if currency_action == "keep" and idx in mismatch_row_indices:
+        # Fixed: was comparing against lowercase "keep", which could
+        # never match the uppercase-only currency_action validated
+        # above -- so this fill never applied.
+        if currency_action == "KEEP" and idx in mismatch_row_indices:
             for col in range(1, ws.max_column + 1):
                 ws.cell(row=current_row, column=col).fill = (
                     CURRENCY_MISMATCH_HIGHLIGHT_FILL
                 )
 
-        # --- Validation: check mandatory fields for main sheet ---
         sheet_name = ws.title
         row_number = current_row
         for field in MANDATORY_FIELDS:
@@ -501,7 +476,9 @@ def process_ar_registry(
     if currency_mismatches:
         dump_rows = len(mismatch_row_indices) if currency_action == "DELETE" else 0
         currency_review = {
-            "status": "kept" if currency_action == "keep" else "deleted",
+            # Fixed: was comparing against lowercase "keep" too, so
+            # this always fell through to "deleted" even on a KEEP run.
+            "status": "kept" if currency_action == "KEEP" else "deleted",
             "action": currency_action,
             "mismatch_count": len(currency_mismatches),
             "dump_rows": dump_rows,

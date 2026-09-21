@@ -115,6 +115,7 @@ class CurrencyMismatchRow(BaseModel):
     s4_company_code: Optional[str] = None
     currency: Optional[str] = None
     supplier: Optional[str] = None          # AP only
+    expected_currency: Optional[str] = None   # AR only
     customer: Optional[str] = None          # AR only
     reference: Optional[str] = None         # AP only
     document_number: Optional[str] = None
