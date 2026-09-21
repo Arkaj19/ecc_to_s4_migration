@@ -273,25 +273,6 @@ function MigrationTab({ isConnected, connectionChecked }) {
     }
   };
 
-  // AR-only: user picked KEEP or DELETE on the CurrencyReviewCard.
-  // Re-submits the same file with currency_action so the backend returns
-  // the actual generated workbook this time.
-  // const handleCurrencyAction = async (action) => {
-  //   setCurrencyActionSubmitting(true);
-  //   setProcessError(false);
-  //   setStatus({ type: 'info', message: `Applying ${action}...` });
-
-  //   try {
-  //     const result = await processArFile(file, action);
-  //     await handleProcessResult(result);
-  //   } catch (error) {
-  //     setProcessError(true);
-  //     setStatus({ type: 'error', message: 'Processing failed', details: error.message });
-  //   } finally {
-  //     setCurrencyActionSubmitting(false);
-  //   }
-  // };
-
   const handleCurrencyAction = async (action) => {
   setCurrencyActionSubmitting(true);
   setProcessError(false);
@@ -313,7 +294,9 @@ function MigrationTab({ isConnected, connectionChecked }) {
 const handleDownloadDump = async () => {
   setDownloadingDump(true);
   try {
-    const { blob, filename } = await downloadArCurrencyDump();
+    const { blob, filename } = await downloadArCurrencyDump(
+      processedFile?.currencyReview?.dumpDownloadId
+    );
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;

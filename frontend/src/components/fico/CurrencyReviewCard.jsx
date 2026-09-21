@@ -3,20 +3,26 @@ import { ClipLoader } from 'react-spinners';
 
 /**
  * Shown in place of the normal success state when POST /process-ar comes
- * back with { status: 'CURRENCY_REVIEW_REQUIRED', ... } instead of a file.
- * That happens when a row's company code doesn't match its expected
- * currency (e.g. company code 1200 expects CAD but the row is USD).
+ * back with a JSON review-required body instead of a file (status:
+ * "review_required" — see ARCurrencyReviewResponse). That happens when a
+ * row's company code doesn't match its expected currency (e.g. company
+ * code 1200 expects CAD but the row is USD).
  *
  * KEEP  -> re-submit with currency_action=KEEP; mismatched rows stay in
  *          the output, highlighted red.
  * DELETE -> re-submit with currency_action=DELETE; mismatched rows are
  *           removed from the main sheet and moved to a
- *           "Currency Mismatch Dump" sheet in the same workbook.
+ *           "Currency Mismatch Dump" workbook.
  */
 const CurrencyReviewCard = ({ payload, onKeep, onDelete, isSubmitting }) => {
   if (!payload) return null;
 
   const mismatches = payload.mismatches || [];
+  // Backend's ARCurrencyReviewResponse has no `message` field, so build
+  // the summary line here instead of reading payload.message (undefined).
+  const summaryMessage = `${payload.mismatch_count} row${payload.mismatch_count === 1 ? '' : 's'} ` +
+    `have a company code whose currency doesn't match what's expected. ` +
+    `Choose how to handle them below.`;
 
   return (
     <div className="bg-white rounded-xl shadow-lg border border-red-200 p-5 space-y-4">
@@ -28,7 +34,7 @@ const CurrencyReviewCard = ({ payload, onKeep, onDelete, isSubmitting }) => {
           <h4 className="text-sm font-semibold text-gray-800">
             Currency mismatch{payload.mismatch_count === 1 ? '' : 'es'} found
           </h4>
-          <p className="text-sm text-gray-600 mt-1">{payload.message}</p>
+          <p className="text-sm text-gray-600 mt-1">{summaryMessage}</p>
         </div>
       </div>
 
@@ -46,7 +52,8 @@ const CurrencyReviewCard = ({ payload, onKeep, onDelete, isSubmitting }) => {
             <tbody className="divide-y divide-gray-100">
               {mismatches.map((m, i) => (
                 <tr key={i} className="text-gray-700">
-                  <td className="px-3 py-1.5">{m.source_row}</td>
+                  {/* Fixed: backend field is "row", not "source_row" */}
+                  <td className="px-3 py-1.5">{m.row}</td>
                   <td className="px-3 py-1.5">{m.company_code}</td>
                   <td className="px-3 py-1.5">{m.currency || 'blank'}</td>
                   <td className="px-3 py-1.5">{m.expected_currency}</td>
